@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CDP1802 I/O Live Demo</title>
+  
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="stylesheet" href="/sw-cdp1802-io/app-73ad0b8315bb30c2.css" integrity="sha384-rpyxAlNKjdmNbSEdAyXniJipZnpeIQINsHyPfnzrjvqbJxrjPRv4uDqj29IHYehk"/>
+  
+<script type="module">
+import init, * as bindings from '/sw-cdp1802-io/sw-cdp1802-io-1db96dd57548a3bd.js';
+const wasm = await init({ module_or_path: '/sw-cdp1802-io/sw-cdp1802-io-1db96dd57548a3bd_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+<link rel="modulepreload" href="/sw-cdp1802-io/sw-cdp1802-io-1db96dd57548a3bd.js" crossorigin="anonymous" integrity="sha384-W9L3jf53oAhb3gztPRbL2j8wyQq/512VYgQXPc859Bib04mMNssLbzkFTV8+NYHd"><link rel="preload" href="/sw-cdp1802-io/sw-cdp1802-io-1db96dd57548a3bd_bg.wasm" crossorigin="anonymous" integrity="sha384-JnEDBOBvaym8dMjuZZRScac+X8ZVZiLx43YvglcdM+U2N2quhEOZSkMlPItoaUDI" as="fetch" type="application/wasm"></head>
+<body></body>
+</html>
