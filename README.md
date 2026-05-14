@@ -2,6 +2,8 @@
 
 Live browser I/O demos for the RCA CDP1802 / COSMAC 1802 emulator.
 
+Live demo: https://sw-comp-history.github.io/sw-cdp1802-io/
+
 This repository is the web-facing companion to the CDP1802 emulator and assembler work in `sw-comp-history`. It provides a Yew/WASM application that visualizes period-style I/O devices while still running real CDP1802 code through the emulator.
 
 ## MVP: COSMAC ELF-II joystick and TV memory display
