@@ -157,7 +157,8 @@ impl Component for App {
                 <header class="topbar">
                     <div>
                         <p class="eyebrow">{"RCA CDP1802 / COSMAC ELF-II I/O"}</p>
-                        <h1>{ format!("{} live demo", self.machine.kind.label()) }</h1>
+                        <h1>{"CDP1802 Emulator and Assembler Demos"}</h1>
+                        <p class="demo-subtitle">{ format!("{} live demo", self.machine.kind.label()) }</p>
                     </div>
                     <div class="status-strip">
                         <span class={classes!("status-dot", self.machine.crashed.then_some("bad"))}></span>

@@ -65,6 +65,14 @@ h1 {
   letter-spacing: 0;
 }
 
+.demo-subtitle {
+  margin: 0.35rem 0 0;
+  color: #dcebd7;
+  font-size: clamp(1rem, 2vw, 1.35rem);
+  font-weight: 700;
+  line-height: 1.1;
+}
+
 h2 {
   margin: 0;
   font-size: 0.95rem;
