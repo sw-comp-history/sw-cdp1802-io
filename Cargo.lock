@@ -847,6 +847,7 @@ dependencies = [
  "console_error_panic_hook",
  "sw-cdp1802-asm",
  "sw-cdp1802-emulator",
+ "sw-cdp1802-isa",
  "wasm-bindgen",
  "web-sys",
  "yew",

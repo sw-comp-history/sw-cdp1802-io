@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 sw-cdp1802-emulator = { path = "../sw-cdp1802-emulator" }
 sw-cdp1802-asm = { path = "../sw-cdp1802-asm" }
+sw-cdp1802-isa = { path = "../sw-cdp1802-isa" }
 yew = { version = "0.21", features = ["csr"] }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["MouseEvent"] }

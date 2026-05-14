@@ -1,16 +1,17 @@
 use web_sys::MouseEvent;
 use yew::prelude::*;
 
-use crate::demo::{DemoMachine, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::demo::{DemoMachine, SCREEN_HEIGHT, SCREEN_WIDTH, assembly_listing};
 
-const PAD: f64 = 22.0;
-const JOYSTICK_SIZE: f64 = 260.0;
-const HANDLE_RADIUS: f64 = 12.0;
-const CELL: usize = 8;
+const PAD: f64 = 16.0;
+const JOYSTICK_SIZE: f64 = 170.0;
+const HANDLE_RADIUS: f64 = 9.0;
+const CELL: usize = 5;
 
 pub struct App {
     machine: DemoMachine,
     dragging: bool,
+    listing: String,
 }
 
 pub enum Msg {
@@ -30,6 +31,7 @@ impl Component for App {
         Self {
             machine,
             dragging: false,
+            listing: assembly_listing(),
         }
     }
 
@@ -54,7 +56,7 @@ impl Component for App {
             }
             Msg::Reset => {
                 self.machine.reset();
-                self.machine.run_frame(self.machine.x, self.machine.y);
+                self.machine.run_frame(128, 128);
                 true
             }
         }
@@ -64,23 +66,22 @@ impl Component for App {
         let link = ctx.link();
         html! {
             <main class="app-shell">
-                <section class="intro-band">
-                    <div class="intro-copy">
+                <header class="topbar">
+                    <div>
                         <p class="eyebrow">{"RCA CDP1802 / COSMAC ELF-II I/O"}</p>
-                        <h1>{"Live joystick RC timing demo"}</h1>
-                        <p>{"Move the joystick. Rust emulates the analog RC delay, the CDP1802 program polls EF4, and the monitor scans memory as pixels."}</p>
+                        <h1>{"Joystick RC timing live demo"}</h1>
                     </div>
                     <div class="status-strip">
                         <span class={classes!("status-dot", self.machine.crashed.then_some("bad"))}></span>
-                        <span>{ if self.machine.crashed { "self-modified program crashed" } else { "program running" } }</span>
+                        <span>{ if self.machine.crashed { "self-modified code fault" } else { "running" } }</span>
                     </div>
-                </section>
+                </header>
 
-                <section class="workbench">
-                    <div class="panel joystick-panel">
+                <section class="demo-grid">
+                    <div class="panel controls-panel">
                         <div class="panel-head">
                             <h2>{"Joystick"}</h2>
-                            <button type="button" onclick={link.callback(|_| Msg::Reset)}>{"Reset memory"}</button>
+                            <button type="button" onclick={link.callback(|_| Msg::Reset)}>{"Reset"}</button>
                         </div>
                         { self.view_joystick(link) }
                         <div class="readouts">
@@ -88,34 +89,24 @@ impl Component for App {
                             <span>{ format!("Y {:03}", self.machine.y) }</span>
                             <span>{ format!("bucket {},{}", self.machine.x_bucket(), self.machine.y_bucket()) }</span>
                         </div>
+                        { self.view_status() }
                     </div>
 
                     <div class="panel monitor-panel">
                         <div class="panel-head">
                             <h2>{"TV monitor"}</h2>
-                            <span>{"64 x 32 memory scan"}</span>
+                            <span>{"64 x 32, 256-byte page"}</span>
                         </div>
                         { self.view_monitor() }
+                        <p class="note">{ format!("Program image: 0x0000..0x{:04x}; video scans 0x0000..0x00ff.", self.machine.program_len.saturating_sub(1)) }</p>
                     </div>
-                </section>
 
-                <section class="telemetry">
-                    <div>
-                        <h2>{"CPU after last frame"}</h2>
-                        <dl>
-                            <dt>{"instructions"}</dt><dd>{ self.machine.last_steps }</dd>
-                            <dt>{"halted"}</dt><dd>{ self.machine.last_state.halted.to_string() }</dd>
-                            <dt>{"D"}</dt><dd>{ format!("0x{:02x}", self.machine.last_state.d) }</dd>
-                            <dt>{"EF4"}</dt><dd>{ self.machine.last_state.ef[3].to_string() }</dd>
-                            <dt>{"R0"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.read_reg(0)) }</dd>
-                            <dt>{"R1"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.read_reg(1)) }</dd>
-                            <dt>{"RF"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.read_reg(15)) }</dd>
-                        </dl>
-                    </div>
-                    <div>
-                        <h2>{"Historical behavior"}</h2>
-                        <p>{"The display is intentionally pointed at low memory, where the demo program also lives. Program bytes appear as video noise. Ball writes can overwrite instructions, so a later frame may fault until memory is reset."}</p>
-                        <p class="error-line">{ self.machine.last_error.as_deref().unwrap_or("No CPU fault on the last frame.") }</p>
+                    <div class="panel listing-panel">
+                        <div class="panel-head">
+                            <h2>{"Assembler listing"}</h2>
+                            <span>{ format!("{} bytes", self.machine.program_len) }</span>
+                        </div>
+                        { self.view_listing() }
                     </div>
                 </section>
             </main>
@@ -149,17 +140,36 @@ impl App {
         }
     }
 
+    fn view_status(&self) -> Html {
+        html! {
+            <dl class="status-list">
+                <dt>{"steps"}</dt><dd>{ self.machine.last_steps }</dd>
+                <dt>{"halted"}</dt><dd>{ self.machine.last_state.halted.to_string() }</dd>
+                <dt>{"PC"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.pc()) }</dd>
+                <dt>{"active"}</dt><dd>{ format!("0x{:04x}", self.machine.active_addr()) }</dd>
+                <dt>{"D"}</dt><dd>{ format!("0x{:02x}", self.machine.last_state.d) }</dd>
+                <dt>{"EF4"}</dt><dd>{ self.machine.last_state.ef[3].to_string() }</dd>
+                <dt>{"RF"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.read_reg(15)) }</dd>
+                <dt>{"status"}</dt><dd>{ self.machine.last_error.as_deref().unwrap_or("ok") }</dd>
+            </dl>
+        }
+    }
+
     fn view_monitor(&self) -> Html {
         let bytes = self.machine.screen_bytes();
+        let program_len = self.machine.program_len;
         let pixels = (0..SCREEN_HEIGHT).flat_map(|row| {
             let bytes = &bytes;
             (0..SCREEN_WIDTH).map(move |col| {
-                let byte = bytes[row * (SCREEN_WIDTH / 8) + col / 8];
+                let byte_index = row * (SCREEN_WIDTH / 8) + col / 8;
+                let byte = bytes[byte_index];
                 let set = (byte & (0x80 >> (col % 8))) != 0;
-                let class = if set { "pixel on" } else { "pixel" };
-                html! {
-                    <span class={class}></span>
-                }
+                let class = classes!(
+                    "pixel",
+                    set.then_some("on"),
+                    (byte_index < program_len).then_some("code")
+                );
+                html! { <span class={class}></span> }
             })
         });
         html! {
@@ -167,5 +177,25 @@ impl App {
                 <div class="screen-grid" style={format!("grid-template-columns: repeat({SCREEN_WIDTH}, {CELL}px);")}>{ for pixels }</div>
             </div>
         }
+    }
+
+    fn view_listing(&self) -> Html {
+        let active = self.machine.active_addr();
+        let rows = self.listing.lines().map(|line| {
+            let is_active = listing_addr(line) == Some(active);
+            html! { <span class={classes!(is_active.then_some("current-line"))}>{ line }</span> }
+        });
+        html! { <pre class="listing">{ for rows }</pre> }
+    }
+}
+
+fn listing_addr(line: &str) -> Option<u16> {
+    let mut parts = line.split_whitespace();
+    let _line_no = parts.next()?;
+    let addr = parts.next()?;
+    if addr.len() == 4 && addr.chars().all(|c| c.is_ascii_hexdigit()) {
+        u16::from_str_radix(addr, 16).ok()
+    } else {
+        None
     }
 }
