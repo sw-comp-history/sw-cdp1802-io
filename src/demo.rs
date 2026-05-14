@@ -521,8 +521,9 @@ mod tests {
 
         assert!(!machine.crashed, "{:?}", machine.last_error);
         assert!(machine.last_state.halted);
-        assert_eq!(machine.memory.read_byte(0x0000), 0x7c);
-        assert_eq!(machine.memory.read_byte(0x004a), 0xf8);
-        assert_eq!(machine.screen_bytes()[0x004a], 0xf8);
+        assert_eq!(machine.memory.read_byte(0x0000), 0x00);
+        assert_eq!(machine.memory.read_byte(0x0018), 0x3f);
+        assert_eq!(machine.memory.read_byte(0x005a), 0xff);
+        assert_eq!(machine.screen_bytes()[0x005a], 0xff);
     }
 }
