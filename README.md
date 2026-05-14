@@ -8,6 +8,8 @@ This repository is the web-facing companion to the CDP1802 emulator and assemble
 
 ## Demos: COSMAC ELF-II joystick and TV memory display
 
+The live page opens on the **Logo** demo by default. Use the demo selector to switch to **Joystick** when you want to run the emulated RC timing experiment.
+
 The **Joystick** demo recreates a 1970s COSMAC ELF-II style experiment:
 
 - A graphical joystick can be moved across an X/Y grid in the browser.

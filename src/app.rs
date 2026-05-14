@@ -38,7 +38,7 @@ impl Component for App {
 
     fn create(_ctx: &Context<Self>) -> Self {
         let mut machine = DemoMachine::default();
-        machine.start_frame(128, 128);
+        machine.switch_demo(DemoKind::Logo);
         let listing = listing_for(machine.kind);
         Self {
             machine,
@@ -188,12 +188,9 @@ impl App {
 
     fn view_demo_picker(&self, link: &html::Scope<Self>) -> Html {
         html! {
-            <select class="demo-select" onchange={link.callback(Msg::SelectDemo)} value={match self.machine.kind {
-                DemoKind::Joystick => "joystick",
-                DemoKind::Logo => "logo",
-            }}>
-                <option value="joystick">{"Joystick"}</option>
-                <option value="logo">{"Logo"}</option>
+            <select class="demo-select" onchange={link.callback(Msg::SelectDemo)}>
+                <option value="joystick" selected={self.machine.kind == DemoKind::Joystick}>{"Joystick"}</option>
+                <option value="logo" selected={self.machine.kind == DemoKind::Logo}>{"Logo"}</option>
             </select>
         }
     }
