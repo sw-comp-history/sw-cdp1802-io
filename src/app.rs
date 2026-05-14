@@ -10,7 +10,7 @@ const JOYSTICK_SIZE: f64 = 170.0;
 const HANDLE_RADIUS: f64 = 9.0;
 const CELL_WIDTH: usize = 4;
 const CELL_HEIGHT: usize = 8;
-const STEP_DELAY_MS: i32 = 35;
+const STEP_DELAY_MS: i32 = 16;
 
 pub struct App {
     machine: DemoMachine,
@@ -201,6 +201,7 @@ impl App {
             <section class="register-panel" aria-label="CPU registers">
                 <div class="register-summary">
                     <span>{ format!("step {}", self.machine.last_steps) }</span>
+                    <span>{ format!("frame {}", self.machine.completed_frames) }</span>
                     <span>{ if self.machine.running() { "stepping" } else if self.machine.last_state.halted { "halted" } else { "ready" } }</span>
                     <span>{ self.machine.last_error.as_deref().unwrap_or("ok") }</span>
                 </div>
@@ -224,15 +225,18 @@ impl App {
     fn view_monitor(&self) -> Html {
         let bytes = self.machine.screen_bytes();
         let program_len = self.machine.program_len;
+        let ball_addr = self.machine.last_ball_addr.map(usize::from);
         let pixels = (0..SCREEN_HEIGHT).flat_map(|row| {
             let bytes = &bytes;
             (0..SCREEN_WIDTH).map(move |col| {
                 let byte_index = row * (SCREEN_WIDTH / 8) + col / 8;
                 let byte = bytes[byte_index];
                 let set = (byte & (0x80 >> (col % 8))) != 0;
+                let ball = set && ball_addr == Some(byte_index);
                 let class = classes!(
                     "pixel",
                     set.then_some("on"),
+                    ball.then_some("ball"),
                     (byte_index < program_len).then_some("code")
                 );
                 html! { <span class={class}></span> }

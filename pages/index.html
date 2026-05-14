@@ -6,11 +6,11 @@
   <title>CDP1802 I/O Live Demo</title>
   
   <link rel="icon" type="image/x-icon" href="favicon.ico">
-  <link rel="stylesheet" href="/sw-cdp1802-io/app-df291513d262fe79.css" integrity="sha384-T+DcQ4K1DU8OoQk3bbGA+F3lehRZXlIPg8aMxuhKyCV7GkWm8aoyCentzlROlzxF"/>
+  <link rel="stylesheet" href="/sw-cdp1802-io/app-606e9e477f87e44d.css" integrity="sha384-70gwwm2GDGrrpuxe4MXQTzZlo2r65XWTs1FINqPssMaYIkhpASoQXLscizv+Zszu"/>
   
 <script type="module">
-import init, * as bindings from '/sw-cdp1802-io/sw-cdp1802-io-63be535f79cac780.js';
-const wasm = await init({ module_or_path: '/sw-cdp1802-io/sw-cdp1802-io-63be535f79cac780_bg.wasm' });
+import init, * as bindings from '/sw-cdp1802-io/sw-cdp1802-io-55c0a084165a0036.js';
+const wasm = await init({ module_or_path: '/sw-cdp1802-io/sw-cdp1802-io-55c0a084165a0036_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -19,6 +19,6 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-<link rel="modulepreload" href="/sw-cdp1802-io/sw-cdp1802-io-63be535f79cac780.js" crossorigin="anonymous" integrity="sha384-adGs5SEVem0mkwg6wxKQSUs4EqLcTbtUEy4B67hq5oICWKxZ/q1VEvDwezEWmGoi"><link rel="preload" href="/sw-cdp1802-io/sw-cdp1802-io-63be535f79cac780_bg.wasm" crossorigin="anonymous" integrity="sha384-SqBi8524TlrtmgH1CHeqzQCItraPX95T6EHLR6NwG8tFvXoQ4vAv5ZshFRUTfDVw" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/sw-cdp1802-io/sw-cdp1802-io-55c0a084165a0036.js" crossorigin="anonymous" integrity="sha384-adGs5SEVem0mkwg6wxKQSUs4EqLcTbtUEy4B67hq5oICWKxZ/q1VEvDwezEWmGoi"><link rel="preload" href="/sw-cdp1802-io/sw-cdp1802-io-55c0a084165a0036_bg.wasm" crossorigin="anonymous" integrity="sha384-ErQl9ZG9WgyMpyxfYkB2ZR4qHLZjnWBxZrrqaMPSqgcJwr09E7dx0OVfQ9wPH16w" as="fetch" type="application/wasm"></head>
 <body></body>
 </html>

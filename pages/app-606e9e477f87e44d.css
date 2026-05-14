@@ -193,6 +193,11 @@ p { line-height: 1.45; }
   box-shadow: 0 0 3px rgba(216, 216, 216, 0.65);
 }
 
+.pixel.on.ball {
+  background: #f2f2f2;
+  box-shadow: 0 0 8px rgba(242, 242, 242, 0.95);
+}
+
 .note {
   margin: 0.55rem 0 0;
   color: #c7d7bf;

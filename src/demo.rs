@@ -27,6 +27,7 @@ pub struct DemoMachine {
     pub program_len: usize,
     pub last_executed_addr: Option<u16>,
     pub completed_frames: u64,
+    pub last_ball_addr: Option<u16>,
     board: Option<WebIoBoard>,
     running: bool,
 }
@@ -90,6 +91,7 @@ impl Default for DemoMachine {
             program_len: 0,
             last_executed_addr: None,
             completed_frames: 0,
+            last_ball_addr: None,
             board: None,
             running: false,
         };
@@ -108,6 +110,7 @@ impl DemoMachine {
         self.last_error = None;
         self.last_executed_addr = None;
         self.completed_frames = 0;
+        self.last_ball_addr = None;
         self.board = None;
         self.running = false;
         match assemble(JOYSTICK_SOURCE) {
@@ -237,9 +240,10 @@ impl DemoMachine {
                 state.write_reg(idx, addr.wrapping_add(1));
             }
             Instruction::Store { reg } => {
-                self.memory
-                    .write_byte(state.read_reg(reg.index_u8()), state.d);
+                let addr = state.read_reg(reg.index_u8());
+                self.memory.write_byte(addr, state.d);
                 if reg.index_u8() == 1 {
+                    self.last_ball_addr = Some(addr);
                     self.visible_memory = self.memory.clone();
                     self.completed_frames += 1;
                 }
@@ -366,8 +370,10 @@ mod tests {
         while machine.completed_frames < 2 && machine.step_frame() {}
 
         assert!(machine.last_state.instr_count > steps_after_first_frame);
+        assert_eq!(machine.last_ball_addr, Some(0x00c0));
         assert_eq!(machine.memory.read_byte(0x0084), 0x00);
         assert_eq!(machine.memory.read_byte(0x00c0), 0x80);
+        assert_eq!(machine.screen_bytes()[0x00c0], 0x80);
     }
 
     #[test]
