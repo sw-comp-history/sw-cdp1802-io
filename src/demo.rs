@@ -8,11 +8,56 @@ pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 pub const SCREEN_BYTES: usize = SCREEN_WIDTH * SCREEN_HEIGHT / 8;
 pub const MAX_STEPS_PER_FRAME: u64 = 80;
+pub const MAX_STEPS_PER_RUN: u64 = 400;
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
+pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
 
 const PORT_CLEAR_VIDEO: u8 = 1;
 const PORT_X_PULSE: u8 = 2;
 const PORT_Y_PULSE: u8 = 3;
+const CHANGE_RECENT_STEPS: u64 = 1;
+const CHANGE_OLDER_STEPS: u64 = 10;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum DemoKind {
+    Joystick,
+    Logo,
+}
+
+impl DemoKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Joystick => "Joystick",
+            Self::Logo => "Logo",
+        }
+    }
+
+    pub fn source(self) -> &'static str {
+        match self {
+            Self::Joystick => JOYSTICK_SOURCE,
+            Self::Logo => LOGO_SOURCE,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ChangeAge {
+    Recent,
+    Older,
+    Stable,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ControlField {
+    Pc,
+    Active,
+    D,
+    Df,
+    P,
+    X,
+    Ef4,
+    Q,
+}
 
 #[derive(Clone, Debug)]
 pub struct DemoMachine {
@@ -28,6 +73,9 @@ pub struct DemoMachine {
     pub last_executed_addr: Option<u16>,
     pub completed_frames: u64,
     pub last_ball_addr: Option<u16>,
+    pub kind: DemoKind,
+    reg_changed_at: [Option<u64>; 16],
+    control_changed_at: [Option<u64>; 8],
     board: Option<WebIoBoard>,
     running: bool,
 }
@@ -92,6 +140,9 @@ impl Default for DemoMachine {
             last_executed_addr: None,
             completed_frames: 0,
             last_ball_addr: None,
+            kind: DemoKind::Joystick,
+            reg_changed_at: [None; 16],
+            control_changed_at: [None; 8],
             board: None,
             running: false,
         };
@@ -111,9 +162,11 @@ impl DemoMachine {
         self.last_executed_addr = None;
         self.completed_frames = 0;
         self.last_ball_addr = None;
+        self.reg_changed_at = [None; 16];
+        self.control_changed_at = [None; 8];
         self.board = None;
         self.running = false;
-        match assemble(JOYSTICK_SOURCE) {
+        match assemble(self.kind.source()) {
             Ok(asm) => {
                 self.program_len = asm.bytes.len();
                 self.memory.load_bytes(0, &asm.bytes);
@@ -149,6 +202,16 @@ impl DemoMachine {
         self.running = true;
     }
 
+    pub fn switch_demo(&mut self, kind: DemoKind) {
+        self.kind = kind;
+        self.reset();
+        if kind == DemoKind::Joystick {
+            self.start_frame(self.x, self.y);
+        } else {
+            self.start_frame(128, 128);
+        }
+    }
+
     pub fn set_position(&mut self, x: u8, y: u8) {
         self.x = x;
         self.y = y;
@@ -169,6 +232,7 @@ impl DemoMachine {
             return false;
         };
 
+        let before = state.clone();
         if let Err(err) = self.step_web_io(&mut state, &mut board) {
             self.last_state = state;
             self.last_steps = self.last_state.instr_count;
@@ -179,6 +243,7 @@ impl DemoMachine {
         }
 
         self.last_steps = state.instr_count;
+        self.track_changes(&before, &state);
         self.last_state = state;
         self.board = Some(board);
 
@@ -187,7 +252,11 @@ impl DemoMachine {
             self.running = false;
             return false;
         }
-        if self.last_state.instr_count >= MAX_STEPS_PER_FRAME && self.completed_frames == 0 {
+        let max_steps = match self.kind {
+            DemoKind::Joystick => MAX_STEPS_PER_FRAME,
+            DemoKind::Logo => MAX_STEPS_PER_RUN,
+        };
+        if self.last_state.instr_count >= max_steps && self.completed_frames == 0 {
             self.crashed = true;
             self.running = false;
             self.last_error = Some("frame exceeded instruction budget".to_string());
@@ -218,6 +287,8 @@ impl DemoMachine {
 
         match insn {
             Instruction::Idle => state.halted = true,
+            Instruction::ResetQ => state.q = false,
+            Instruction::SetQ => state.q = true,
             Instruction::Branch { target } => {
                 let high = state.pc() & 0xff00;
                 state.set_pc(high | target as u16);
@@ -242,10 +313,12 @@ impl DemoMachine {
             Instruction::Store { reg } => {
                 let addr = state.read_reg(reg.index_u8());
                 self.memory.write_byte(addr, state.d);
-                if reg.index_u8() == 1 {
+                if self.kind == DemoKind::Joystick && reg.index_u8() == 1 {
                     self.last_ball_addr = Some(addr);
                     self.visible_memory = self.memory.clone();
                     self.completed_frames += 1;
+                } else if self.kind == DemoKind::Logo {
+                    self.visible_memory = self.memory.clone();
                 }
             }
             Instruction::PutLow { reg } => {
@@ -311,13 +384,66 @@ impl DemoMachine {
         (!self.last_state.halted).then_some(self.last_state.pc())
     }
 
+    pub fn control_age(&self, field: ControlField) -> ChangeAge {
+        self.change_age(self.control_changed_at[field as usize])
+    }
+
+    pub fn register_age(&self, idx: usize) -> ChangeAge {
+        self.change_age(self.reg_changed_at[idx])
+    }
+
+    fn change_age(&self, changed_at: Option<u64>) -> ChangeAge {
+        let Some(changed_at) = changed_at else {
+            return ChangeAge::Stable;
+        };
+        let age = self.last_state.instr_count.saturating_sub(changed_at);
+        if age <= CHANGE_RECENT_STEPS {
+            ChangeAge::Recent
+        } else if age <= CHANGE_OLDER_STEPS {
+            ChangeAge::Older
+        } else {
+            ChangeAge::Stable
+        }
+    }
+
+    fn track_changes(&mut self, before: &CpuState, after: &CpuState) {
+        let tick = after.instr_count;
+        if before.pc() != after.pc() {
+            self.control_changed_at[ControlField::Pc as usize] = Some(tick);
+            self.control_changed_at[ControlField::Active as usize] = Some(tick);
+        }
+        if before.d != after.d {
+            self.control_changed_at[ControlField::D as usize] = Some(tick);
+        }
+        if before.df != after.df {
+            self.control_changed_at[ControlField::Df as usize] = Some(tick);
+        }
+        if before.p != after.p {
+            self.control_changed_at[ControlField::P as usize] = Some(tick);
+        }
+        if before.x != after.x {
+            self.control_changed_at[ControlField::X as usize] = Some(tick);
+        }
+        if before.ef[3] != after.ef[3] {
+            self.control_changed_at[ControlField::Ef4 as usize] = Some(tick);
+        }
+        if before.q != after.q {
+            self.control_changed_at[ControlField::Q as usize] = Some(tick);
+        }
+        for idx in 0..16 {
+            if before.read_reg(idx as u8) != after.read_reg(idx as u8) {
+                self.reg_changed_at[idx] = Some(tick);
+            }
+        }
+    }
+
     pub fn screen_bytes(&self) -> Vec<u8> {
         self.visible_memory.read_range(SCREEN_BASE, SCREEN_BYTES)
     }
 }
 
-pub fn assembly_listing() -> String {
-    assemble_listing(JOYSTICK_SOURCE)
+pub fn listing_for(kind: DemoKind) -> String {
+    assemble_listing(kind.source())
         .unwrap_or_else(|err| format!("assembler listing error: {err:?}"))
 }
 
@@ -343,7 +469,7 @@ mod tests {
         machine.run_frame(128, 128);
 
         assert_eq!(machine.memory.read_byte(0x0084), 0x80);
-        assert!(!machine.crashed);
+        assert!(!machine.crashed, "{:?}", machine.last_error);
     }
 
     #[test]
@@ -378,9 +504,25 @@ mod tests {
 
     #[test]
     fn assembler_listing_is_generated_from_included_source() {
-        let listing = assembly_listing();
+        let listing = listing_for(DemoKind::Joystick);
 
         assert!(listing.contains("OUT 1"));
         assert!(listing.contains("STR R1"));
+    }
+
+    #[test]
+    fn logo_demo_draws_pixels_and_halts() {
+        let mut machine = DemoMachine::default();
+
+        machine.switch_demo(DemoKind::Logo);
+        while machine.running() {
+            machine.step_frame();
+        }
+
+        assert!(!machine.crashed, "{:?}", machine.last_error);
+        assert!(machine.last_state.halted);
+        assert_eq!(machine.memory.read_byte(0x0000), 0x7c);
+        assert_eq!(machine.memory.read_byte(0x004a), 0xf8);
+        assert_eq!(machine.screen_bytes()[0x004a], 0xf8);
     }
 }

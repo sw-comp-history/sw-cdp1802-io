@@ -24,6 +24,16 @@ button {
   cursor: pointer;
 }
 
+select {
+  width: 100%;
+  border: 1px solid #6f7f6f;
+  border-radius: 6px;
+  background: #0f150f;
+  color: #eef4e8;
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+}
+
 .app-shell {
   min-height: 100vh;
   display: flex;
@@ -148,6 +158,25 @@ p { line-height: 1.45; }
   margin-top: 0.6rem;
 }
 
+.demo-select {
+  margin-bottom: 0.65rem;
+}
+
+.logo-demo-note {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.logo-demo-note span {
+  border: 1px solid #384638;
+  border-radius: 5px;
+  background: #0f150f;
+  padding: 0.42rem 0.45rem;
+}
+
 .readouts span,
 .control-registers dd,
 .register-grid dd,
@@ -254,6 +283,26 @@ p { line-height: 1.45; }
   min-width: 0;
   padding: 0.22rem 0.3rem;
   overflow-wrap: anywhere;
+  color: #f5f5f5;
+}
+
+.control-registers dd.changed-recent,
+.register-grid dd.changed-recent {
+  color: #fff5f2;
+  background: #7d1f1a;
+  border-color: #d73a31;
+}
+
+.control-registers dd.changed-older,
+.register-grid dd.changed-older {
+  color: #edf4ff;
+  background: #173765;
+  border-color: #255fbd;
+}
+
+.control-registers dd.changed-stable,
+.register-grid dd.changed-stable {
+  color: #f5f5f5;
 }
 
 .listing-panel {

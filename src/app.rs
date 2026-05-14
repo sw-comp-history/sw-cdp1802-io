@@ -1,9 +1,11 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
-use web_sys::MouseEvent;
+use web_sys::{Event, HtmlSelectElement, MouseEvent};
 use yew::prelude::*;
 
-use crate::demo::{DemoMachine, SCREEN_HEIGHT, SCREEN_WIDTH, assembly_listing};
+use crate::demo::{
+    ChangeAge, ControlField, DemoKind, DemoMachine, SCREEN_HEIGHT, SCREEN_WIDTH, listing_for,
+};
 
 const PAD: f64 = 16.0;
 const JOYSTICK_SIZE: f64 = 170.0;
@@ -22,6 +24,7 @@ pub struct App {
 }
 
 pub enum Msg {
+    SelectDemo(Event),
     StartDrag(MouseEvent),
     Drag(MouseEvent),
     StopDrag,
@@ -36,10 +39,11 @@ impl Component for App {
     fn create(_ctx: &Context<Self>) -> Self {
         let mut machine = DemoMachine::default();
         machine.start_frame(128, 128);
+        let listing = listing_for(machine.kind);
         Self {
             machine,
             dragging: false,
-            listing: assembly_listing(),
+            listing,
             tick_pending: false,
             target_x: 128,
             target_y: 128,
@@ -54,14 +58,30 @@ impl Component for App {
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
+            Msg::SelectDemo(event) => {
+                let select = event.target_unchecked_into::<HtmlSelectElement>();
+                let kind = match select.value().as_str() {
+                    "logo" => DemoKind::Logo,
+                    _ => DemoKind::Joystick,
+                };
+                self.target_x = 128;
+                self.target_y = 128;
+                self.machine.switch_demo(kind);
+                self.listing = listing_for(kind);
+                self.schedule_tick(ctx);
+                true
+            }
             Msg::StartDrag(event) => {
+                if self.machine.kind != DemoKind::Joystick {
+                    return false;
+                }
                 self.dragging = true;
                 self.update_from_event(&event);
                 self.schedule_tick(ctx);
                 true
             }
             Msg::Drag(event) => {
-                if self.dragging {
+                if self.dragging && self.machine.kind == DemoKind::Joystick {
                     self.update_from_event(&event);
                     self.schedule_tick(ctx);
                     true
@@ -97,7 +117,7 @@ impl Component for App {
                 <header class="topbar">
                     <div>
                         <p class="eyebrow">{"RCA CDP1802 / COSMAC ELF-II I/O"}</p>
-                        <h1>{"Joystick RC timing live demo"}</h1>
+                        <h1>{ format!("{} live demo", self.machine.kind.label()) }</h1>
                     </div>
                     <div class="status-strip">
                         <span class={classes!("status-dot", self.machine.crashed.then_some("bad"))}></span>
@@ -108,15 +128,11 @@ impl Component for App {
                 <section class="demo-grid">
                     <div class="panel controls-panel">
                         <div class="panel-head">
-                            <h2>{"Joystick"}</h2>
+                            <h2>{"Demo"}</h2>
                             <button type="button" onclick={link.callback(|_| Msg::Reset)}>{"Reset"}</button>
                         </div>
-                        { self.view_joystick(link) }
-                        <div class="readouts">
-                            <span>{ format!("X {:03}", self.target_x) }</span>
-                            <span>{ format!("Y {:03}", self.target_y) }</span>
-                            <span>{ format!("bucket {},{}", axis_bucket(self.target_x), axis_bucket(self.target_y)) }</span>
-                        </div>
+                        { self.view_demo_picker(link) }
+                        { self.view_demo_controls(link) }
                         { self.view_registers() }
                     </div>
 
@@ -132,7 +148,7 @@ impl Component for App {
                     <div class="panel listing-panel">
                         <div class="panel-head">
                             <h2>{"Assembler listing"}</h2>
-                            <span>{ format!("{} bytes", self.machine.program_len) }</span>
+                            <span>{ format!("{}: {} bytes", self.machine.kind.label(), self.machine.program_len) }</span>
                         </div>
                         { self.view_listing() }
                     </div>
@@ -170,6 +186,39 @@ impl App {
         callback.forget();
     }
 
+    fn view_demo_picker(&self, link: &html::Scope<Self>) -> Html {
+        html! {
+            <select class="demo-select" onchange={link.callback(Msg::SelectDemo)} value={match self.machine.kind {
+                DemoKind::Joystick => "joystick",
+                DemoKind::Logo => "logo",
+            }}>
+                <option value="joystick">{"Joystick"}</option>
+                <option value="logo">{"Logo"}</option>
+            </select>
+        }
+    }
+
+    fn view_demo_controls(&self, link: &html::Scope<Self>) -> Html {
+        match self.machine.kind {
+            DemoKind::Joystick => html! {
+                <>
+                    { self.view_joystick(link) }
+                    <div class="readouts">
+                        <span>{ format!("X {:03}", self.target_x) }</span>
+                        <span>{ format!("Y {:03}", self.target_y) }</span>
+                        <span>{ format!("bucket {},{}", axis_bucket(self.target_x), axis_bucket(self.target_y)) }</span>
+                    </div>
+                </>
+            },
+            DemoKind::Logo => html! {
+                <div class="logo-demo-note">
+                    <span>{"one-shot 1802 draw"}</span>
+                    <span>{"video page 0x0000..0x00ff"}</span>
+                </div>
+            },
+        }
+    }
+
     fn view_joystick(&self, link: &html::Scope<Self>) -> Html {
         let span = JOYSTICK_SIZE - PAD * 2.0;
         let cx = PAD + (self.target_x as f64 / 255.0) * span;
@@ -193,7 +242,7 @@ impl App {
             html! {
                 <>
                     <dt>{ format!("R{:X}", idx) }</dt>
-                    <dd>{ format!("0x{:04x}", self.machine.last_state.read_reg(idx)) }</dd>
+                    <dd class={change_class(self.machine.register_age(idx as usize))}>{ format!("0x{:04x}", self.machine.last_state.read_reg(idx)) }</dd>
                 </>
             }
         });
@@ -206,14 +255,14 @@ impl App {
                     <span>{ self.machine.last_error.as_deref().unwrap_or("ok") }</span>
                 </div>
                 <dl class="control-registers">
-                    <dt>{"PC"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.pc()) }</dd>
-                    <dt>{"active"}</dt><dd>{ format!("0x{:04x}", self.machine.active_addr()) }</dd>
-                    <dt>{"D"}</dt><dd>{ format!("0x{:02x}", self.machine.last_state.d) }</dd>
-                    <dt>{"DF"}</dt><dd>{ self.machine.last_state.df.to_string() }</dd>
-                    <dt>{"P"}</dt><dd>{ format!("R{:X}", self.machine.last_state.p) }</dd>
-                    <dt>{"X"}</dt><dd>{ format!("R{:X}", self.machine.last_state.x) }</dd>
-                    <dt>{"EF4"}</dt><dd>{ self.machine.last_state.ef[3].to_string() }</dd>
-                    <dt>{"Q"}</dt><dd>{ self.machine.last_state.q.to_string() }</dd>
+                    <dt>{"PC"}</dt><dd class={change_class(self.machine.control_age(ControlField::Pc))}>{ format!("0x{:04x}", self.machine.last_state.pc()) }</dd>
+                    <dt>{"active"}</dt><dd class={change_class(self.machine.control_age(ControlField::Active))}>{ format!("0x{:04x}", self.machine.active_addr()) }</dd>
+                    <dt>{"D"}</dt><dd class={change_class(self.machine.control_age(ControlField::D))}>{ format!("0x{:02x}", self.machine.last_state.d) }</dd>
+                    <dt>{"DF"}</dt><dd class={change_class(self.machine.control_age(ControlField::Df))}>{ self.machine.last_state.df.to_string() }</dd>
+                    <dt>{"P"}</dt><dd class={change_class(self.machine.control_age(ControlField::P))}>{ format!("R{:X}", self.machine.last_state.p) }</dd>
+                    <dt>{"X"}</dt><dd class={change_class(self.machine.control_age(ControlField::X))}>{ format!("R{:X}", self.machine.last_state.x) }</dd>
+                    <dt>{"EF4"}</dt><dd class={change_class(self.machine.control_age(ControlField::Ef4))}>{ self.machine.last_state.ef[3].to_string() }</dd>
+                    <dt>{"Q"}</dt><dd class={change_class(self.machine.control_age(ControlField::Q))}>{ self.machine.last_state.q.to_string() }</dd>
                 </dl>
                 <dl class="register-grid">
                     { for regs }
@@ -253,7 +302,7 @@ impl App {
         let current = self.machine.current_addr();
         let previous = self.machine.last_executed_addr;
         let rows = self.listing.lines().map(|line| {
-            let addr = listing_addr(line);
+            let addr = listing_addr(line).or_else(|| symbol_addr(line));
             html! {
                 <span class={classes!(
                     (addr == current).then_some("current-line"),
@@ -278,4 +327,19 @@ fn listing_addr(line: &str) -> Option<u16> {
 
 fn axis_bucket(value: u8) -> u8 {
     ((value as u16 * 4) / 256) as u8
+}
+
+fn symbol_addr(line: &str) -> Option<u16> {
+    let mut parts = line.split_whitespace();
+    let _name = parts.next()?;
+    let value = parts.next()?.strip_prefix("0x")?;
+    u16::from_str_radix(value, 16).ok()
+}
+
+fn change_class(age: ChangeAge) -> &'static str {
+    match age {
+        ChangeAge::Recent => "changed-recent",
+        ChangeAge::Older => "changed-older",
+        ChangeAge::Stable => "changed-stable",
+    }
 }
