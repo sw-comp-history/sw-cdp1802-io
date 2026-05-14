@@ -1,3 +1,5 @@
+use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::Closure;
 use web_sys::MouseEvent;
 use yew::prelude::*;
 
@@ -7,12 +9,14 @@ const PAD: f64 = 16.0;
 const JOYSTICK_SIZE: f64 = 170.0;
 const HANDLE_RADIUS: f64 = 9.0;
 const CELL_WIDTH: usize = 4;
-const CELL_HEIGHT: usize = 16;
+const CELL_HEIGHT: usize = 8;
+const STEP_DELAY_MS: i32 = 120;
 
 pub struct App {
     machine: DemoMachine,
     dragging: bool,
     listing: String,
+    tick_pending: bool,
 }
 
 pub enum Msg {
@@ -20,6 +24,7 @@ pub enum Msg {
     Drag(MouseEvent),
     StopDrag,
     Reset,
+    Tick,
 }
 
 impl Component for App {
@@ -33,19 +38,22 @@ impl Component for App {
             machine,
             dragging: false,
             listing: assembly_listing(),
+            tick_pending: false,
         }
     }
 
-    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::StartDrag(event) => {
                 self.dragging = true;
                 self.update_from_event(&event);
+                self.schedule_tick(ctx);
                 true
             }
             Msg::Drag(event) => {
                 if self.dragging {
                     self.update_from_event(&event);
+                    self.schedule_tick(ctx);
                     true
                 } else {
                     false
@@ -57,7 +65,14 @@ impl Component for App {
             }
             Msg::Reset => {
                 self.machine.reset();
-                self.machine.run_frame(128, 128);
+                self.machine.start_frame(128, 128);
+                self.schedule_tick(ctx);
+                true
+            }
+            Msg::Tick => {
+                self.tick_pending = false;
+                self.machine.step_frame();
+                self.schedule_tick(ctx);
                 true
             }
         }
@@ -90,7 +105,7 @@ impl Component for App {
                             <span>{ format!("Y {:03}", self.machine.y) }</span>
                             <span>{ format!("bucket {},{}", self.machine.x_bucket(), self.machine.y_bucket()) }</span>
                         </div>
-                        { self.view_status() }
+                        { self.view_registers() }
                     </div>
 
                     <div class="panel monitor-panel">
@@ -120,7 +135,25 @@ impl App {
         let span = JOYSTICK_SIZE - PAD * 2.0;
         let x = ((event.offset_x() as f64 - PAD).clamp(0.0, span) / span * 255.0).round() as u8;
         let y = ((event.offset_y() as f64 - PAD).clamp(0.0, span) / span * 255.0).round() as u8;
-        self.machine.run_frame(x, y);
+        self.machine.start_frame(x, y);
+    }
+
+    fn schedule_tick(&mut self, ctx: &Context<Self>) {
+        if self.tick_pending || !self.machine.running() {
+            return;
+        }
+
+        self.tick_pending = true;
+        let link = ctx.link().clone();
+        let callback = Closure::once(move || link.send_message(Msg::Tick));
+        web_sys::window()
+            .expect("browser window")
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                callback.as_ref().unchecked_ref(),
+                STEP_DELAY_MS,
+            )
+            .expect("schedule CPU step");
+        callback.forget();
     }
 
     fn view_joystick(&self, link: &html::Scope<Self>) -> Html {
@@ -141,18 +174,36 @@ impl App {
         }
     }
 
-    fn view_status(&self) -> Html {
+    fn view_registers(&self) -> Html {
+        let regs = (0..16).map(|idx| {
+            html! {
+                <>
+                    <dt>{ format!("R{:X}", idx) }</dt>
+                    <dd>{ format!("0x{:04x}", self.machine.last_state.read_reg(idx)) }</dd>
+                </>
+            }
+        });
         html! {
-            <dl class="status-list">
-                <dt>{"steps"}</dt><dd>{ self.machine.last_steps }</dd>
-                <dt>{"halted"}</dt><dd>{ self.machine.last_state.halted.to_string() }</dd>
-                <dt>{"PC"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.pc()) }</dd>
-                <dt>{"active"}</dt><dd>{ format!("0x{:04x}", self.machine.active_addr()) }</dd>
-                <dt>{"D"}</dt><dd>{ format!("0x{:02x}", self.machine.last_state.d) }</dd>
-                <dt>{"EF4"}</dt><dd>{ self.machine.last_state.ef[3].to_string() }</dd>
-                <dt>{"RF"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.read_reg(15)) }</dd>
-                <dt>{"status"}</dt><dd>{ self.machine.last_error.as_deref().unwrap_or("ok") }</dd>
-            </dl>
+            <section class="register-panel" aria-label="CPU registers">
+                <div class="register-summary">
+                    <span>{ format!("step {}", self.machine.last_steps) }</span>
+                    <span>{ if self.machine.running() { "stepping" } else if self.machine.last_state.halted { "halted" } else { "ready" } }</span>
+                    <span>{ self.machine.last_error.as_deref().unwrap_or("ok") }</span>
+                </div>
+                <dl class="control-registers">
+                    <dt>{"PC"}</dt><dd>{ format!("0x{:04x}", self.machine.last_state.pc()) }</dd>
+                    <dt>{"active"}</dt><dd>{ format!("0x{:04x}", self.machine.active_addr()) }</dd>
+                    <dt>{"D"}</dt><dd>{ format!("0x{:02x}", self.machine.last_state.d) }</dd>
+                    <dt>{"DF"}</dt><dd>{ self.machine.last_state.df.to_string() }</dd>
+                    <dt>{"P"}</dt><dd>{ format!("R{:X}", self.machine.last_state.p) }</dd>
+                    <dt>{"X"}</dt><dd>{ format!("R{:X}", self.machine.last_state.x) }</dd>
+                    <dt>{"EF4"}</dt><dd>{ self.machine.last_state.ef[3].to_string() }</dd>
+                    <dt>{"Q"}</dt><dd>{ self.machine.last_state.q.to_string() }</dd>
+                </dl>
+                <dl class="register-grid">
+                    { for regs }
+                </dl>
+            </section>
         }
     }
 
@@ -181,10 +232,16 @@ impl App {
     }
 
     fn view_listing(&self) -> Html {
-        let active = self.machine.active_addr();
+        let current = self.machine.current_addr();
+        let previous = self.machine.last_executed_addr;
         let rows = self.listing.lines().map(|line| {
-            let is_active = listing_addr(line) == Some(active);
-            html! { <span class={classes!(is_active.then_some("current-line"))}>{ line }</span> }
+            let addr = listing_addr(line);
+            html! {
+                <span class={classes!(
+                    (addr == current).then_some("current-line"),
+                    (addr == previous && addr != current).then_some("previous-line"),
+                )}>{ line }</span>
+            }
         });
         html! { <pre class="listing">{ for rows }</pre> }
     }

@@ -13,8 +13,8 @@
         LDI SCRATCH
         PLO R2
 
-        ; Measure Y with consecutive EF4 polls. Each B4 is a real
-        ; input-pin sample; the label reached determines the row offset.
+        ; Unrolled Y polling loop. Each B4 is one EF4 input-pin sample;
+        ; the label reached determines the row offset.
         OUT 3
         B4 Y0
         B4 Y1
@@ -31,7 +31,7 @@ Y3:     LDI 0xc0
 Y_DONE:
         STR R2
 
-        ; Measure X the same way. These constants are byte offsets
+        ; Unrolled X polling loop. These constants are byte offsets
         ; within an 8-byte video row: 0, 2, 4, or 6.
         OUT 2
         B4 X0

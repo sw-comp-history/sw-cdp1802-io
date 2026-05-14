@@ -149,7 +149,9 @@ p { line-height: 1.45; }
 }
 
 .readouts span,
-.status-list dd {
+.control-registers dd,
+.register-grid dd,
+.register-summary span {
   border: 1px solid #384638;
   border-radius: 5px;
   background: #0f150f;
@@ -160,27 +162,6 @@ p { line-height: 1.45; }
   text-align: center;
   font-size: 0.78rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.status-list {
-  display: grid;
-  grid-template-columns: 4.6rem minmax(0, 1fr);
-  gap: 0.28rem 0.45rem;
-  margin: 0.75rem 0 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
-}
-
-.status-list dt {
-  color: #afd39f;
-  padding-top: 0.25rem;
-}
-
-.status-list dd {
-  margin: 0;
-  min-width: 0;
-  padding: 0.25rem 0.35rem;
-  overflow-wrap: anywhere;
 }
 
 .monitor-panel { overflow-x: auto; }
@@ -218,6 +199,58 @@ p { line-height: 1.45; }
   font-size: 0.84rem;
 }
 
+.register-panel {
+  margin-top: 0.65rem;
+  min-width: 0;
+}
+
+.register-summary {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.register-summary span {
+  min-width: 0;
+  padding: 0.28rem 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.control-registers,
+.register-grid {
+  display: grid;
+  gap: 0.28rem 0.35rem;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.control-registers {
+  grid-template-columns: repeat(2, max-content minmax(0, 1fr));
+  margin-bottom: 0.45rem;
+}
+
+.register-grid {
+  grid-template-columns: repeat(2, max-content minmax(0, 1fr));
+}
+
+.control-registers dt,
+.register-grid dt {
+  color: #afd39f;
+  padding-top: 0.22rem;
+}
+
+.control-registers dd,
+.register-grid dd {
+  margin: 0;
+  min-width: 0;
+  padding: 0.22rem 0.3rem;
+  overflow-wrap: anywhere;
+}
+
 .listing-panel {
   min-width: 0;
 }
@@ -244,8 +277,13 @@ p { line-height: 1.45; }
 }
 
 .current-line {
-  background: #f5d04c;
-  color: #111411;
+  background: #d73a31;
+  color: #fff5f2;
+}
+
+.previous-line {
+  background: #255fbd;
+  color: #edf4ff;
 }
 
 @media (max-width: 1100px) {

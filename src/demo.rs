@@ -24,6 +24,9 @@ pub struct DemoMachine {
     pub crashed: bool,
     pub last_error: Option<String>,
     pub program_len: usize,
+    pub last_executed_addr: Option<u16>,
+    board: Option<WebIoBoard>,
+    running: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -65,7 +68,6 @@ impl WebIoBoard {
     fn take_action(&mut self) -> Option<BoardAction> {
         self.action.take()
     }
-
 }
 
 impl Default for DemoMachine {
@@ -79,6 +81,9 @@ impl Default for DemoMachine {
             crashed: false,
             last_error: None,
             program_len: 0,
+            last_executed_addr: None,
+            board: None,
+            running: false,
         };
         machine.reset();
         machine
@@ -92,6 +97,9 @@ impl DemoMachine {
         self.last_steps = 0;
         self.crashed = false;
         self.last_error = None;
+        self.last_executed_addr = None;
+        self.board = None;
+        self.running = false;
         match assemble(JOYSTICK_SOURCE) {
             Ok(asm) => {
                 self.program_len = asm.bytes.len();
@@ -106,33 +114,66 @@ impl DemoMachine {
     }
 
     pub fn run_frame(&mut self, x: u8, y: u8) {
+        self.start_frame(x, y);
+        while self.step_frame() {}
+    }
+
+    pub fn start_frame(&mut self, x: u8, y: u8) {
         if self.crashed {
             return;
         }
         self.x = x;
         self.y = y;
+        self.last_state = CpuState::new();
+        self.last_state.x = 15;
+        self.last_steps = 0;
+        self.last_error = None;
+        self.last_executed_addr = None;
+        self.board = Some(WebIoBoard::new(x, y));
+        self.running = true;
+    }
 
-        let mut state = CpuState::new();
-        state.x = 15;
-        let mut board = WebIoBoard::new(x, y);
-        let start = state.instr_count;
-
-        while !state.halted && state.instr_count - start < MAX_STEPS {
-            if let Err(err) = self.step_web_io(&mut state, &mut board) {
-                self.last_state = state;
-                self.last_steps = self.last_state.instr_count - start;
-                self.crashed = true;
-                self.last_error = Some(err);
-                return;
-            }
+    pub fn step_frame(&mut self) -> bool {
+        if self.crashed || !self.running {
+            return false;
         }
 
-        self.last_steps = state.instr_count - start;
-        self.last_state = state;
-        if !self.last_state.halted {
+        let mut state = self.last_state.clone();
+        let Some(mut board) = self.board.take() else {
+            self.running = false;
+            self.last_error = Some("missing I/O board state".to_string());
+            return false;
+        };
+
+        if let Err(err) = self.step_web_io(&mut state, &mut board) {
+            self.last_state = state;
+            self.last_steps = self.last_state.instr_count;
             self.crashed = true;
-            self.last_error = Some("frame exceeded instruction budget".to_string());
+            self.running = false;
+            self.last_error = Some(err);
+            return false;
         }
+
+        self.last_steps = state.instr_count;
+        self.last_state = state;
+        self.board = Some(board);
+
+        if self.last_state.halted {
+            self.running = false;
+            return false;
+        }
+        if self.last_state.instr_count >= MAX_STEPS {
+            self.crashed = true;
+            self.running = false;
+            self.last_error = Some("frame exceeded instruction budget".to_string());
+            return false;
+        }
+
+        true
+    }
+
+    pub fn running(&self) -> bool {
+        self.running && !self.crashed
     }
 
     fn step_web_io(&mut self, state: &mut CpuState, board: &mut WebIoBoard) -> Result<(), String> {
@@ -142,6 +183,7 @@ impl DemoMachine {
 
         board.sync_inputs_to_cpu(state);
         let pc = state.pc();
+        self.last_executed_addr = Some(pc);
         let (insn, size) = self
             .memory
             .decode_at(pc)
@@ -236,10 +278,15 @@ impl DemoMachine {
 
     pub fn active_addr(&self) -> u16 {
         if self.last_state.halted {
-            self.last_state.pc().saturating_sub(1)
+            self.last_executed_addr
+                .unwrap_or_else(|| self.last_state.pc().saturating_sub(1))
         } else {
             self.last_state.pc()
         }
+    }
+
+    pub fn current_addr(&self) -> Option<u16> {
+        (!self.last_state.halted).then_some(self.last_state.pc())
     }
 
     pub fn screen_bytes(&self) -> Vec<u8> {
