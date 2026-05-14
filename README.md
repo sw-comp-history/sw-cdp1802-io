@@ -13,9 +13,9 @@ The first demo recreates a 1970s COSMAC ELF-II style experiment:
 - A graphical joystick can be moved across an X/Y grid in the browser.
 - Rust emulates the joystick potentiometers and resistor-capacitor timing circuit.
 - A compact CDP1802 assembly program, under 64 bytes, clears non-code display memory, pulses output ports for the X and Y axes, polls `EF4`, and issues the draw command for the measured ball position.
-- A simulated TV monitor renders memory as a 64 x 32 monochrome pixel grid.
+- A simulated black-and-white TV monitor renders memory as a 64 x 32 bit grid, with each bit drawn as a taller light-gray block on black to approximate the stacked ELF-II video pixels.
 
-The video behavior is intentionally historically rough. On the COSMAC ELF-II style setup, the video buffer could include ordinary memory, so the program bytes themselves appear as noise pixels. The joystick widget starts centered, and the initial ball lands near the center of the 256-byte memory display. If the ball moves into the part of the display backed by the running program, the program self-modifies and can crash on a later frame. That failure mode is part of the demo because it mirrors the behavior of the original hardware experiment.
+The black-and-white video behavior is intentionally historically rough. On the COSMAC ELF-II style setup, the video buffer could include ordinary memory, so the program bytes themselves appear as noise pixels. The joystick widget starts centered, and the initial ball lands near the center of the 256-byte memory display. If the ball moves into the part of the display backed by the running program, the program self-modifies and can crash on a later frame. That failure mode is part of the demo because it mirrors the behavior of the original hardware experiment.
 
 ## Repository layout
 

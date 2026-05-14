@@ -6,7 +6,8 @@ use crate::demo::{DemoMachine, SCREEN_HEIGHT, SCREEN_WIDTH, assembly_listing};
 const PAD: f64 = 16.0;
 const JOYSTICK_SIZE: f64 = 170.0;
 const HANDLE_RADIUS: f64 = 9.0;
-const CELL: usize = 5;
+const CELL_WIDTH: usize = 4;
+const CELL_HEIGHT: usize = 16;
 
 pub struct App {
     machine: DemoMachine,
@@ -174,7 +175,7 @@ impl App {
         });
         html! {
             <div class="monitor-bezel">
-                <div class="screen-grid" style={format!("grid-template-columns: repeat({SCREEN_WIDTH}, {CELL}px);")}>{ for pixels }</div>
+                <div class="screen-grid" style={format!("grid-template-columns: repeat({SCREEN_WIDTH}, {CELL_WIDTH}px); grid-auto-rows: {CELL_HEIGHT}px;")}>{ for pixels }</div>
             </div>
         }
     }

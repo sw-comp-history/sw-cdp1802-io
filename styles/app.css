@@ -196,29 +196,20 @@ p { line-height: 1.45; }
 .screen-grid {
   display: grid;
   gap: 1px;
-  background: #1b271b;
-  padding: 5px;
-  border: 1px solid #263526;
+  background: #030303;
+  padding: 6px;
+  border: 1px solid #171717;
 }
 
 .pixel {
-  width: 5px;
-  height: 5px;
-  background: #061006;
-}
-
-.pixel.code {
-  background: #14261a;
+  width: 4px;
+  height: 16px;
+  background: #000;
 }
 
 .pixel.on {
-  background: #a8ff74;
-  box-shadow: 0 0 4px #a8ff74;
-}
-
-.pixel.code.on {
-  background: #f5d04c;
-  box-shadow: 0 0 5px #f5d04c;
+  background: #d8d8d8;
+  box-shadow: 0 0 3px rgba(216, 216, 216, 0.65);
 }
 
 .note {
