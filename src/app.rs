@@ -1,10 +1,11 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
-use web_sys::{Event, HtmlSelectElement, MouseEvent};
+use web_sys::{Event, HtmlSelectElement, HtmlTextAreaElement, InputEvent, MouseEvent};
 use yew::prelude::*;
 
 use crate::demo::{
-    ChangeAge, ControlField, DemoKind, DemoMachine, SCREEN_HEIGHT, SCREEN_WIDTH, listing_for,
+    ChangeAge, ControlField, DemoKind, DemoMachine, PATTERN_SOURCE, SCREEN_HEIGHT, SCREEN_WIDTH,
+    listing_for, listing_for_source,
 };
 
 const PAD: f64 = 16.0;
@@ -18,6 +19,7 @@ pub struct App {
     machine: DemoMachine,
     dragging: bool,
     listing: String,
+    source: String,
     tick_pending: bool,
     target_x: u8,
     target_y: u8,
@@ -25,6 +27,9 @@ pub struct App {
 
 pub enum Msg {
     SelectDemo(Event),
+    SourceChanged(InputEvent),
+    AssembleSource,
+    RunSource,
     StartDrag(MouseEvent),
     Drag(MouseEvent),
     StopDrag,
@@ -44,6 +49,7 @@ impl Component for App {
             machine,
             dragging: false,
             listing,
+            source: PATTERN_SOURCE.to_string(),
             tick_pending: false,
             target_x: 128,
             target_y: 128,
@@ -62,13 +68,41 @@ impl Component for App {
                 let select = event.target_unchecked_into::<HtmlSelectElement>();
                 let kind = match select.value().as_str() {
                     "logo" => DemoKind::Logo,
+                    "pattern" => DemoKind::Pattern,
                     _ => DemoKind::Joystick,
                 };
                 self.target_x = 128;
                 self.target_y = 128;
-                self.machine.switch_demo(kind);
-                self.listing = listing_for(kind);
-                self.schedule_tick(ctx);
+                if kind == DemoKind::Pattern {
+                    self.source = PATTERN_SOURCE.to_string();
+                    self.machine.kind = kind;
+                    self.machine.reset_with_source(&self.source);
+                    self.listing = listing_for_source(&self.source);
+                } else {
+                    self.machine.switch_demo(kind);
+                    self.listing = listing_for(kind);
+                    self.schedule_tick(ctx);
+                }
+                true
+            }
+            Msg::SourceChanged(event) => {
+                let textarea = event.target_unchecked_into::<HtmlTextAreaElement>();
+                self.source = textarea.value();
+                true
+            }
+            Msg::AssembleSource => {
+                if self.machine.kind == DemoKind::Pattern {
+                    self.machine.reset_with_source(&self.source);
+                    self.listing = listing_for_source(&self.source);
+                }
+                true
+            }
+            Msg::RunSource => {
+                if self.machine.kind == DemoKind::Pattern {
+                    self.machine.run_source(&self.source);
+                    self.listing = listing_for_source(&self.source);
+                    self.schedule_tick(ctx);
+                }
                 true
             }
             Msg::StartDrag(event) => {
@@ -96,9 +130,15 @@ impl Component for App {
             Msg::Reset => {
                 self.target_x = 128;
                 self.target_y = 128;
-                self.machine.reset();
-                self.machine.start_frame(128, 128);
-                self.schedule_tick(ctx);
+                if self.machine.kind == DemoKind::Pattern {
+                    self.source = PATTERN_SOURCE.to_string();
+                    self.machine.reset_with_source(&self.source);
+                    self.listing = listing_for_source(&self.source);
+                } else {
+                    self.machine.reset();
+                    self.machine.start_frame(128, 128);
+                    self.schedule_tick(ctx);
+                }
                 true
             }
             Msg::Tick => {
@@ -121,7 +161,7 @@ impl Component for App {
                     </div>
                     <div class="status-strip">
                         <span class={classes!("status-dot", self.machine.crashed.then_some("bad"))}></span>
-                        <span>{ if self.machine.crashed { "self-modified code fault" } else { "running" } }</span>
+                        <span>{ self.status_label() }</span>
                     </div>
                 </header>
 
@@ -153,6 +193,7 @@ impl Component for App {
                         { self.view_listing() }
                     </div>
                 </section>
+                { self.view_footer() }
             </main>
         }
     }
@@ -173,6 +214,8 @@ impl App {
             return;
         }
 
+        // Run one 1802 instruction per browser callback so long demos yield
+        // back to the UI thread between emulator steps.
         self.tick_pending = true;
         let link = ctx.link().clone();
         let callback = Closure::once(move || link.send_message(Msg::Tick));
@@ -191,6 +234,7 @@ impl App {
             <select class="demo-select" onchange={link.callback(Msg::SelectDemo)}>
                 <option value="joystick" selected={self.machine.kind == DemoKind::Joystick}>{"Joystick"}</option>
                 <option value="logo" selected={self.machine.kind == DemoKind::Logo}>{"Logo"}</option>
+                <option value="pattern" selected={self.machine.kind == DemoKind::Pattern}>{"Pattern"}</option>
             </select>
         }
     }
@@ -213,6 +257,58 @@ impl App {
                     <span>{"video page 0x0000..0x00ff"}</span>
                 </div>
             },
+            DemoKind::Pattern => self.view_source_editor(link),
+        }
+    }
+
+    fn view_source_editor(&self, link: &html::Scope<Self>) -> Html {
+        html! {
+            <div class="source-editor">
+                <div class="source-actions">
+                    <button type="button" onclick={link.callback(|_| Msg::AssembleSource)} disabled={self.machine.running()}>{"Assemble"}</button>
+                    <button type="button" onclick={link.callback(|_| Msg::RunSource)} disabled={self.machine.running()}>{"Run"}</button>
+                </div>
+                <textarea
+                    class="asm-source"
+                    spellcheck="false"
+                    value={self.source.clone()}
+                    oninput={link.callback(Msg::SourceChanged)}
+                />
+            </div>
+        }
+    }
+
+    fn status_label(&self) -> &'static str {
+        if self.machine.crashed {
+            "fault"
+        } else if self.machine.running() {
+            "running"
+        } else if self.machine.last_state.halted {
+            "halted"
+        } else {
+            "ready"
+        }
+    }
+
+    fn view_footer(&self) -> Html {
+        html! {
+            <footer class="site-footer">
+                <span>{"MIT License"}</span>
+                <span class="footer-sep">{"|"}</span>
+                <span>{"(c) 2026 Michael A. Wright"}</span>
+                <span class="footer-sep">{"|"}</span>
+                <a href="https://github.com/sw-comp-history/sw-cdp1802-io" target="_blank">{"Web demo source"}</a>
+                <span class="footer-sep">{"|"}</span>
+                <a href="https://github.com/sw-comp-history/sw-cdp1802-emulator" target="_blank">{"Emulator"}</a>
+                <span class="footer-sep">{"|"}</span>
+                <a href="https://github.com/sw-comp-history/sw-cdp1802-asm" target="_blank">{"Assembler"}</a>
+                <span class="footer-sep">{"|"}</span>
+                <a href="https://github.com/sw-comp-history/sw-cdp1802-isa" target="_blank">{"ISA"}</a>
+                <span class="footer-sep">{"|"}</span>
+                <a href="https://software-wrighter-lab.github.io/" target="_blank">{"Blog"}</a>
+                <span class="footer-sep">{"|"}</span>
+                <a href="https://www.youtube.com/@SoftwareWrighter" target="_blank">{"YouTube"}</a>
+            </footer>
         }
     }
 

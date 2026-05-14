@@ -11,6 +11,7 @@ pub const MAX_STEPS_PER_FRAME: u64 = 80;
 pub const MAX_STEPS_PER_RUN: u64 = 400;
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
+pub const PATTERN_SOURCE: &str = include_str!("asm/pattern.s");
 
 const PORT_CLEAR_VIDEO: u8 = 1;
 const PORT_X_PULSE: u8 = 2;
@@ -22,6 +23,7 @@ const CHANGE_OLDER_STEPS: u64 = 10;
 pub enum DemoKind {
     Joystick,
     Logo,
+    Pattern,
 }
 
 impl DemoKind {
@@ -29,6 +31,7 @@ impl DemoKind {
         match self {
             Self::Joystick => "Joystick",
             Self::Logo => "Logo",
+            Self::Pattern => "Pattern",
         }
     }
 
@@ -36,6 +39,7 @@ impl DemoKind {
         match self {
             Self::Joystick => JOYSTICK_SOURCE,
             Self::Logo => LOGO_SOURCE,
+            Self::Pattern => PATTERN_SOURCE,
         }
     }
 }
@@ -153,6 +157,10 @@ impl Default for DemoMachine {
 
 impl DemoMachine {
     pub fn reset(&mut self) {
+        self.reset_with_source(self.kind.source());
+    }
+
+    pub fn reset_with_source(&mut self, source: &str) {
         self.memory = Memory::default();
         self.visible_memory = Memory::default();
         self.last_state = CpuState::new();
@@ -166,7 +174,7 @@ impl DemoMachine {
         self.control_changed_at = [None; 8];
         self.board = None;
         self.running = false;
-        match assemble(self.kind.source()) {
+        match assemble(source) {
             Ok(asm) => {
                 self.program_len = asm.bytes.len();
                 self.memory.load_bytes(0, &asm.bytes);
@@ -205,11 +213,16 @@ impl DemoMachine {
     pub fn switch_demo(&mut self, kind: DemoKind) {
         self.kind = kind;
         self.reset();
-        if kind == DemoKind::Joystick {
-            self.start_frame(self.x, self.y);
-        } else {
-            self.start_frame(128, 128);
+        match kind {
+            DemoKind::Joystick => self.start_frame(self.x, self.y),
+            DemoKind::Logo => self.start_frame(128, 128),
+            DemoKind::Pattern => {}
         }
+    }
+
+    pub fn run_source(&mut self, source: &str) {
+        self.reset_with_source(source);
+        self.start_frame(128, 128);
     }
 
     pub fn set_position(&mut self, x: u8, y: u8) {
@@ -254,7 +267,7 @@ impl DemoMachine {
         }
         let max_steps = match self.kind {
             DemoKind::Joystick => MAX_STEPS_PER_FRAME,
-            DemoKind::Logo => MAX_STEPS_PER_RUN,
+            DemoKind::Logo | DemoKind::Pattern => MAX_STEPS_PER_RUN,
         };
         if self.last_state.instr_count >= max_steps && self.completed_frames == 0 {
             self.crashed = true;
@@ -289,6 +302,10 @@ impl DemoMachine {
             Instruction::Idle => state.halted = true,
             Instruction::ResetQ => state.q = false,
             Instruction::SetQ => state.q = true,
+            Instruction::Increment { reg } => {
+                let idx = reg.index_u8();
+                state.write_reg(idx, state.read_reg(idx).wrapping_add(1));
+            }
             Instruction::Branch { target } => {
                 let high = state.pc() & 0xff00;
                 state.set_pc(high | target as u16);
@@ -317,7 +334,7 @@ impl DemoMachine {
                     self.last_ball_addr = Some(addr);
                     self.visible_memory = self.memory.clone();
                     self.completed_frames += 1;
-                } else if self.kind == DemoKind::Logo {
+                } else if matches!(self.kind, DemoKind::Logo | DemoKind::Pattern) {
                     self.visible_memory = self.memory.clone();
                 }
             }
@@ -443,8 +460,11 @@ impl DemoMachine {
 }
 
 pub fn listing_for(kind: DemoKind) -> String {
-    assemble_listing(kind.source())
-        .unwrap_or_else(|err| format!("assembler listing error: {err:?}"))
+    listing_for_source(kind.source())
+}
+
+pub fn listing_for_source(source: &str) -> String {
+    assemble_listing(source).unwrap_or_else(|err| format!("assembler listing error: {err:?}"))
 }
 
 #[cfg(test)]
@@ -524,5 +544,23 @@ mod tests {
         assert_eq!(machine.memory.read_byte(0x0000), 0x00);
         assert_eq!(machine.memory.read_byte(0x005a), 0xff);
         assert_eq!(machine.screen_bytes()[0x005a], 0xff);
+    }
+
+    #[test]
+    fn pattern_demo_assembles_and_draws_lower_half() {
+        let mut machine = DemoMachine::default();
+
+        machine.kind = DemoKind::Pattern;
+        machine.run_source(PATTERN_SOURCE);
+        while machine.running() {
+            machine.step_frame();
+        }
+
+        assert!(!machine.crashed, "{:?}", machine.last_error);
+        assert!(machine.last_state.halted);
+        assert_eq!(machine.memory.read_byte(0x0080), 0xaa);
+        assert_eq!(machine.memory.read_byte(0x0088), 0xf0);
+        assert_eq!(machine.memory.read_byte(0x0090), 0xff);
+        assert_eq!(machine.screen_bytes()[0x0080], 0xaa);
     }
 }

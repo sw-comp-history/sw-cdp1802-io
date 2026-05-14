@@ -8,7 +8,7 @@ This repository is the web-facing companion to the CDP1802 emulator and assemble
 
 ## Demos: COSMAC ELF-II joystick and TV memory display
 
-The live page opens on the **Logo** demo by default. Use the demo selector to switch to **Joystick** when you want to run the emulated RC timing experiment.
+The live page opens on the **Logo** demo by default. Use the demo selector to switch to **Joystick** when you want to run the emulated RC timing experiment, or **Pattern** when you want to edit a small assembly program and run it in the browser.
 
 The **Joystick** demo recreates a 1970s COSMAC ELF-II style experiment:
 
@@ -21,12 +21,15 @@ The black-and-white video behavior is intentionally historically rough. On the C
 
 The **Logo** demo runs a separate CDP1802 assembly program that draws a blocky ELF-inspired mark into the same 256-byte video page. The demo selector switches the assembled source, listing, monitor, and CPU state view.
 
+The **Pattern** demo is an editable CDP1802 assembly source panel. **Assemble** runs the Rust assembler on the current text and refreshes the listing and loaded memory image. **Run** assembles the current text, starts the emulator, and steps one 1802 instruction per browser timer callback so the page yields back to the browser thread between instructions. The default source writes a simple pattern into addresses `0x0080..0x0097`, which are the lower half of the 256-byte memory/video page.
+
 ## Repository layout
 
 - `src/app.rs`: Yew UI with demo selector, conditional joystick controls, monitor, listing, and CPU telemetry.
 - `src/demo.rs`: CDP1802 machine wrapper that assembles the selected source, runs the I/O protocol, tracks CPU status, and updates the 256-byte video page.
 - `src/asm/joystick_lowmem.s`: joystick CDP1802 assembly source included with Rust `include_str!` and assembled at runtime.
 - `src/asm/logo.s`: logo CDP1802 assembly source included with Rust `include_str!` and assembled at runtime.
+- `src/asm/pattern.s`: editable starter CDP1802 assembly source included with Rust `include_str!` and loaded into the Pattern demo.
 - `styles/app.css`: application styling.
 - `pages/`: tracked GitHub Pages output.
 - `scripts/build-pages.sh`: Trunk build and `pages/` refresh script.
