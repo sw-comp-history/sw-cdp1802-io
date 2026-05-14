@@ -522,7 +522,7 @@ mod tests {
         assert!(!machine.crashed, "{:?}", machine.last_error);
         assert!(machine.last_state.halted);
         assert_eq!(machine.memory.read_byte(0x0000), 0x00);
-        assert_eq!(machine.memory.read_byte(0x0054), 0xff);
-        assert_eq!(machine.screen_bytes()[0x0054], 0xff);
+        assert_eq!(machine.memory.read_byte(0x005a), 0xff);
+        assert_eq!(machine.screen_bytes()[0x005a], 0xff);
     }
 }
