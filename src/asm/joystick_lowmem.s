@@ -1,49 +1,60 @@
-        ; Compact 256-byte COSMAC ELF-II style joystick demo.
+        ; Shared COSMAC ELF-II 256-byte joystick RC demo.
         ;
-        ; The whole visible memory page is 256 bytes. This program is kept
-        ; below one quarter of that page, so its bytes show up as noise in
-        ; the top-left part of the display while most of the screen remains
-        ; available for the ball.
+        ; The full 0x0000..0x00ff memory page is also the 64x32 video
+        ; display. Program bytes appear as pixels. If the ball lands on
+        ; code, STR R1 overwrites code and the next frame can misbehave.
         ;
-        ; OUT 1 asks the web I/O board to clear display memory above the
-        ; loaded program image. That preserves code bytes, including any
-        ; accidental self-modification from moving the ball into code.
+        ; OUT 1 asks the host board to clear display bytes above the
+        ; loaded program image. OUT 3 pulses Y, OUT 2 pulses X, and EF4
+        ; becomes true after the emulated RC delay. The 1802 counts the
+        ; polling delay and computes the video address itself.
         ORG 0x0000
         OUT 1
+        LDI SCRATCH
+        PLO R2
 
-        ; Pulse and sample Y first. The RC board exposes readiness through
-        ; EF4; each B4 is one timing sample.
+        ; Measure Y with consecutive EF4 polls. Each B4 is a real
+        ; input-pin sample; the label reached determines the row offset.
         OUT 3
         B4 Y0
         B4 Y1
         B4 Y2
         BR Y3
 
-        ; Pulse and sample X from the selected Y bucket. The web I/O board
-        ; records the measured bucket while the program performs the same
-        ; polling sequence that a small hand-entered monitor program would.
-Y0:     OUT 2
-        B4 DRAW
-        B4 DRAW
-        B4 DRAW
-        BR DRAW
-Y1:     OUT 2
-        B4 DRAW
-        B4 DRAW
-        B4 DRAW
-        BR DRAW
-Y2:     OUT 2
-        B4 DRAW
-        B4 DRAW
-        B4 DRAW
-        BR DRAW
-Y3:     OUT 2
-        B4 DRAW
-        B4 DRAW
-        B4 DRAW
-        BR DRAW
+Y0:     LDI 0x00
+        BR Y_DONE
+Y1:     LDI 0x40
+        BR Y_DONE
+Y2:     LDI 0x80
+        BR Y_DONE
+Y3:     LDI 0xc0
+Y_DONE:
+        STR R2
 
-        ; OUT 4 draws the ball from the measured X/Y buckets, then IDL
-        ; returns control to the browser for the next joystick event.
-DRAW:   OUT 4
+        ; Measure X the same way. These constants are byte offsets
+        ; within an 8-byte video row: 0, 2, 4, or 6.
+        OUT 2
+        B4 X0
+        B4 X1
+        B4 X2
+        BR X3
+
+X0:     LDI 0x00
+        BR X_DONE
+X1:     LDI 0x02
+        BR X_DONE
+X2:     LDI 0x04
+        BR X_DONE
+X3:     LDI 0x06
+
+        ; Add X byte offset to the stored Y row offset and write the
+        ; ball pixel at the computed video address.
+X_DONE:
+        SEX R2
+        ADD
+        PLO R1
+        LDI 0x80
+        STR R1
         IDL
+
+SCRATCH:

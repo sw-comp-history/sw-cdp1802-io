@@ -13,7 +13,6 @@ pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 const PORT_CLEAR_VIDEO: u8 = 1;
 const PORT_X_PULSE: u8 = 2;
 const PORT_Y_PULSE: u8 = 3;
-const PORT_DRAW_BALL: u8 = 4;
 
 #[derive(Clone, Debug)]
 pub struct DemoMachine {
@@ -30,7 +29,6 @@ pub struct DemoMachine {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum BoardAction {
     ClearVideo,
-    DrawBall,
 }
 
 #[derive(Clone, Debug)]
@@ -56,7 +54,6 @@ impl WebIoBoard {
             PORT_CLEAR_VIDEO => self.action = Some(BoardAction::ClearVideo),
             PORT_X_PULSE => self.rc.output_port(PORT_X_PULSE, 0),
             PORT_Y_PULSE => self.rc.output_port(PORT_Y_PULSE, 0),
-            PORT_DRAW_BALL => self.action = Some(BoardAction::DrawBall),
             _ => {}
         }
     }
@@ -69,13 +66,6 @@ impl WebIoBoard {
         self.action.take()
     }
 
-    fn x_bucket(&self) -> u8 {
-        self.rc.delay_for_axis(JoystickAxis::X)
-    }
-
-    fn y_bucket(&self) -> u8 {
-        self.rc.delay_for_axis(JoystickAxis::Y)
-    }
 }
 
 impl Default for DemoMachine {
@@ -182,6 +172,37 @@ impl DemoMachine {
                 board.output_port(port);
                 state.write_reg(idx, addr.wrapping_add(1));
             }
+            Instruction::Store { reg } => {
+                self.memory
+                    .write_byte(state.read_reg(reg.index_u8()), state.d);
+            }
+            Instruction::PutLow { reg } => {
+                let idx = reg.index_u8();
+                let value = (state.read_reg(idx) & 0xff00) | state.d as u16;
+                state.write_reg(idx, value);
+            }
+            Instruction::PutHigh { reg } => {
+                let idx = reg.index_u8();
+                let value = ((state.d as u16) << 8) | (state.read_reg(idx) & 0x00ff);
+                state.write_reg(idx, value);
+            }
+            Instruction::LoadImmediate { value } => state.d = value,
+            Instruction::SetX { reg } => state.x = reg.index_u8(),
+            Instruction::Add => {
+                let value = self.memory.read_byte(state.read_reg(state.x));
+                let sum = state.d as u16 + value as u16;
+                state.d = sum as u8;
+                state.df = sum > 0xff;
+            }
+            Instruction::AddImmediate { value } => {
+                let sum = state.d as u16 + value as u16;
+                state.d = sum as u8;
+                state.df = sum > 0xff;
+            }
+            Instruction::ShiftLeft => {
+                state.df = state.d & 0x80 != 0;
+                state.d = state.d.wrapping_shl(1);
+            }
             other => {
                 return Err(format!(
                     "unsupported web demo instruction at 0x{pc:04x}: {other:?}"
@@ -193,7 +214,6 @@ impl DemoMachine {
         if let Some(action) = board.take_action() {
             match action {
                 BoardAction::ClearVideo => self.clear_non_code_video(),
-                BoardAction::DrawBall => self.draw_ball(board.x_bucket(), board.y_bucket()),
             }
         }
         Ok(())
@@ -204,13 +224,6 @@ impl DemoMachine {
         for offset in start..SCREEN_BYTES {
             self.memory.write_byte(SCREEN_BASE + offset as u16, 0);
         }
-    }
-
-    fn draw_ball(&mut self, x_bucket: u8, y_bucket: u8) {
-        let row_offsets = [0x00, 0x40, 0x80, 0xc0];
-        let col_offsets = [0x00, 0x02, 0x04, 0x06];
-        let addr = row_offsets[y_bucket as usize] + col_offsets[x_bucket as usize];
-        self.memory.write_byte(addr, 0x80);
     }
 
     pub fn x_bucket(&self) -> u8 {
@@ -281,6 +294,6 @@ mod tests {
         let listing = assembly_listing();
 
         assert!(listing.contains("OUT 1"));
-        assert!(listing.contains("DRAW"));
+        assert!(listing.contains("STR R1"));
     }
 }
