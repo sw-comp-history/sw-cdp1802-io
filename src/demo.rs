@@ -1,5 +1,5 @@
 use sw_cdp1802_asm::{assemble, assemble_listing};
-use sw_cdp1802_emulator::{BoardIo, CpuState, JoystickAxis, JoystickRcBoard, Memory};
+use sw_cdp1802_emulator::{BoardIo, CpuState, JoystickRcBoard, Memory};
 use sw_cdp1802_isa::ExternalFlag;
 use sw_cdp1802_isa::Instruction;
 
@@ -7,7 +7,7 @@ pub const SCREEN_BASE: u16 = 0x0000;
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 pub const SCREEN_BYTES: usize = SCREEN_WIDTH * SCREEN_HEIGHT / 8;
-pub const MAX_STEPS: u64 = 80;
+pub const MAX_STEPS_PER_FRAME: u64 = 80;
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 
 const PORT_CLEAR_VIDEO: u8 = 1;
@@ -17,6 +17,7 @@ const PORT_Y_PULSE: u8 = 3;
 #[derive(Clone, Debug)]
 pub struct DemoMachine {
     pub memory: Memory,
+    pub visible_memory: Memory,
     pub last_state: CpuState,
     pub x: u8,
     pub y: u8,
@@ -25,6 +26,7 @@ pub struct DemoMachine {
     pub last_error: Option<String>,
     pub program_len: usize,
     pub last_executed_addr: Option<u16>,
+    pub completed_frames: u64,
     board: Option<WebIoBoard>,
     running: bool,
 }
@@ -65,6 +67,10 @@ impl WebIoBoard {
         self.rc.after_instruction();
     }
 
+    fn set_position(&mut self, x: u8, y: u8) {
+        self.rc.set_position(x, y);
+    }
+
     fn take_action(&mut self) -> Option<BoardAction> {
         self.action.take()
     }
@@ -74,6 +80,7 @@ impl Default for DemoMachine {
     fn default() -> Self {
         let mut machine = Self {
             memory: Memory::default(),
+            visible_memory: Memory::default(),
             last_state: CpuState::new(),
             x: 128,
             y: 128,
@@ -82,6 +89,7 @@ impl Default for DemoMachine {
             last_error: None,
             program_len: 0,
             last_executed_addr: None,
+            completed_frames: 0,
             board: None,
             running: false,
         };
@@ -93,17 +101,20 @@ impl Default for DemoMachine {
 impl DemoMachine {
     pub fn reset(&mut self) {
         self.memory = Memory::default();
+        self.visible_memory = Memory::default();
         self.last_state = CpuState::new();
         self.last_steps = 0;
         self.crashed = false;
         self.last_error = None;
         self.last_executed_addr = None;
+        self.completed_frames = 0;
         self.board = None;
         self.running = false;
         match assemble(JOYSTICK_SOURCE) {
             Ok(asm) => {
                 self.program_len = asm.bytes.len();
                 self.memory.load_bytes(0, &asm.bytes);
+                self.visible_memory.load_bytes(0, &asm.bytes);
             }
             Err(err) => {
                 self.program_len = 0;
@@ -113,9 +124,11 @@ impl DemoMachine {
         }
     }
 
+    #[cfg(test)]
     pub fn run_frame(&mut self, x: u8, y: u8) {
         self.start_frame(x, y);
-        while self.step_frame() {}
+        let target_frame = self.completed_frames + 1;
+        while self.completed_frames < target_frame && self.step_frame() {}
     }
 
     pub fn start_frame(&mut self, x: u8, y: u8) {
@@ -131,6 +144,14 @@ impl DemoMachine {
         self.last_executed_addr = None;
         self.board = Some(WebIoBoard::new(x, y));
         self.running = true;
+    }
+
+    pub fn set_position(&mut self, x: u8, y: u8) {
+        self.x = x;
+        self.y = y;
+        if let Some(board) = self.board.as_mut() {
+            board.set_position(x, y);
+        }
     }
 
     pub fn step_frame(&mut self) -> bool {
@@ -159,10 +180,11 @@ impl DemoMachine {
         self.board = Some(board);
 
         if self.last_state.halted {
+            self.visible_memory = self.memory.clone();
             self.running = false;
             return false;
         }
-        if self.last_state.instr_count >= MAX_STEPS {
+        if self.last_state.instr_count >= MAX_STEPS_PER_FRAME && self.completed_frames == 0 {
             self.crashed = true;
             self.running = false;
             self.last_error = Some("frame exceeded instruction budget".to_string());
@@ -217,6 +239,10 @@ impl DemoMachine {
             Instruction::Store { reg } => {
                 self.memory
                     .write_byte(state.read_reg(reg.index_u8()), state.d);
+                if reg.index_u8() == 1 {
+                    self.visible_memory = self.memory.clone();
+                    self.completed_frames += 1;
+                }
             }
             Instruction::PutLow { reg } => {
                 let idx = reg.index_u8();
@@ -268,14 +294,6 @@ impl DemoMachine {
         }
     }
 
-    pub fn x_bucket(&self) -> u8 {
-        JoystickRcBoard::new(self.x, self.y).delay_for_axis(JoystickAxis::X)
-    }
-
-    pub fn y_bucket(&self) -> u8 {
-        JoystickRcBoard::new(self.x, self.y).delay_for_axis(JoystickAxis::Y)
-    }
-
     pub fn active_addr(&self) -> u16 {
         if self.last_state.halted {
             self.last_executed_addr
@@ -290,7 +308,7 @@ impl DemoMachine {
     }
 
     pub fn screen_bytes(&self) -> Vec<u8> {
-        self.memory.read_range(SCREEN_BASE, SCREEN_BYTES)
+        self.visible_memory.read_range(SCREEN_BASE, SCREEN_BYTES)
     }
 }
 
@@ -333,6 +351,22 @@ mod tests {
 
         machine.run_frame(0, 255);
         assert_eq!(machine.memory.read_byte(0x00c4), 0x00);
+        assert_eq!(machine.memory.read_byte(0x00c0), 0x80);
+    }
+
+    #[test]
+    fn joystick_position_update_changes_rc_delays_without_cpu_restart() {
+        let mut machine = DemoMachine::default();
+
+        machine.start_frame(128, 128);
+        while machine.completed_frames < 1 && machine.step_frame() {}
+        let steps_after_first_frame = machine.last_state.instr_count;
+
+        machine.set_position(0, 255);
+        while machine.completed_frames < 2 && machine.step_frame() {}
+
+        assert!(machine.last_state.instr_count > steps_after_first_frame);
+        assert_eq!(machine.memory.read_byte(0x0084), 0x00);
         assert_eq!(machine.memory.read_byte(0x00c0), 0x80);
     }
 

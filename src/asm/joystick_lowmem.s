@@ -9,6 +9,8 @@
         ; becomes true after the emulated RC delay. The 1802 counts the
         ; polling delay and computes the video address itself.
         ORG 0x0000
+START:
+        SEX RF
         OUT 1
         LDI SCRATCH
         PLO R2
@@ -55,6 +57,6 @@ X_DONE:
         PLO R1
         LDI 0x80
         STR R1
-        IDL
+        BR START
 
 SCRATCH:

@@ -10,13 +10,15 @@ const JOYSTICK_SIZE: f64 = 170.0;
 const HANDLE_RADIUS: f64 = 9.0;
 const CELL_WIDTH: usize = 4;
 const CELL_HEIGHT: usize = 8;
-const STEP_DELAY_MS: i32 = 120;
+const STEP_DELAY_MS: i32 = 35;
 
 pub struct App {
     machine: DemoMachine,
     dragging: bool,
     listing: String,
     tick_pending: bool,
+    target_x: u8,
+    target_y: u8,
 }
 
 pub enum Msg {
@@ -33,12 +35,20 @@ impl Component for App {
 
     fn create(_ctx: &Context<Self>) -> Self {
         let mut machine = DemoMachine::default();
-        machine.run_frame(128, 128);
+        machine.start_frame(128, 128);
         Self {
             machine,
             dragging: false,
             listing: assembly_listing(),
             tick_pending: false,
+            target_x: 128,
+            target_y: 128,
+        }
+    }
+
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+        if first_render {
+            self.schedule_tick(ctx);
         }
     }
 
@@ -64,6 +74,8 @@ impl Component for App {
                 true
             }
             Msg::Reset => {
+                self.target_x = 128;
+                self.target_y = 128;
                 self.machine.reset();
                 self.machine.start_frame(128, 128);
                 self.schedule_tick(ctx);
@@ -101,9 +113,9 @@ impl Component for App {
                         </div>
                         { self.view_joystick(link) }
                         <div class="readouts">
-                            <span>{ format!("X {:03}", self.machine.x) }</span>
-                            <span>{ format!("Y {:03}", self.machine.y) }</span>
-                            <span>{ format!("bucket {},{}", self.machine.x_bucket(), self.machine.y_bucket()) }</span>
+                            <span>{ format!("X {:03}", self.target_x) }</span>
+                            <span>{ format!("Y {:03}", self.target_y) }</span>
+                            <span>{ format!("bucket {},{}", axis_bucket(self.target_x), axis_bucket(self.target_y)) }</span>
                         </div>
                         { self.view_registers() }
                     </div>
@@ -133,9 +145,11 @@ impl Component for App {
 impl App {
     fn update_from_event(&mut self, event: &MouseEvent) {
         let span = JOYSTICK_SIZE - PAD * 2.0;
-        let x = ((event.offset_x() as f64 - PAD).clamp(0.0, span) / span * 255.0).round() as u8;
-        let y = ((event.offset_y() as f64 - PAD).clamp(0.0, span) / span * 255.0).round() as u8;
-        self.machine.start_frame(x, y);
+        self.target_x =
+            ((event.offset_x() as f64 - PAD).clamp(0.0, span) / span * 255.0).round() as u8;
+        self.target_y =
+            ((event.offset_y() as f64 - PAD).clamp(0.0, span) / span * 255.0).round() as u8;
+        self.machine.set_position(self.target_x, self.target_y);
     }
 
     fn schedule_tick(&mut self, ctx: &Context<Self>) {
@@ -158,8 +172,8 @@ impl App {
 
     fn view_joystick(&self, link: &html::Scope<Self>) -> Html {
         let span = JOYSTICK_SIZE - PAD * 2.0;
-        let cx = PAD + (self.machine.x as f64 / 255.0) * span;
-        let cy = PAD + (self.machine.y as f64 / 255.0) * span;
+        let cx = PAD + (self.target_x as f64 / 255.0) * span;
+        let cy = PAD + (self.target_y as f64 / 255.0) * span;
         html! {
             <svg class="joystick" viewBox={format!("0 0 {JOYSTICK_SIZE} {JOYSTICK_SIZE}")}
                 onmousedown={link.callback(Msg::StartDrag)}
@@ -256,4 +270,8 @@ fn listing_addr(line: &str) -> Option<u16> {
     } else {
         None
     }
+}
+
+fn axis_bucket(value: u8) -> u8 {
+    ((value as u16 * 4) / 256) as u8
 }
