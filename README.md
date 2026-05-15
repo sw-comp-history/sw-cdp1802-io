@@ -8,6 +8,8 @@ Live demo: https://sw-comp-history.github.io/sw-cdp1802-io/
 
 This repository is the web-facing companion to the CDP1802 emulator and assembler work in `sw-comp-history`. It provides a Yew/WASM application that visualizes period-style I/O devices while still running real CDP1802 code through the emulator.
 
+![COSMAC ELF-II board](images/cosmac-elf-ii-board.jpg)
+
 ## Demos: COSMAC ELF-II joystick and TV memory display
 
 The live page opens on the **Logo** demo by default. Use the demo selector to switch to **Joystick** when you want to run the emulated RC timing experiment, or **Pattern** when you want to edit a small assembly program and run it in the browser.
