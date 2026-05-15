@@ -101,25 +101,23 @@ impl ScopeState {
         }
     }
 
-    fn samples(&self, axis: JoystickAxis, current_tick: u64) -> Vec<ScopeSample> {
-        let first_tick = current_tick.saturating_sub((SCOPE_SAMPLES - 1) as u64);
+    fn samples(&self, axis: JoystickAxis, _current_tick: u64) -> Vec<ScopeSample> {
         (0..SCOPE_SAMPLES)
             .map(|offset| {
-                let tick = first_tick + offset as u64;
+                let tick = offset as u64;
                 ScopeSample {
                     tick,
-                    high: self.is_high(axis, tick),
+                    high: self.is_high_at_offset(axis, tick),
                 }
             })
             .collect()
     }
 
-    fn is_high(&self, axis: JoystickAxis, tick: u64) -> bool {
+    fn is_high_at_offset(&self, axis: JoystickAxis, offset: u64) -> bool {
         let Some(pulse) = self.pulse(axis) else {
             return false;
         };
-        let age = tick.saturating_sub(pulse.trigger_tick);
-        tick >= pulse.trigger_tick && age <= u64::from(pulse.delay_ticks)
+        offset <= u64::from(pulse.delay_ticks)
     }
 }
 
@@ -588,17 +586,9 @@ mod tests {
 
         let pulse = machine.scope.pulse(JoystickAxis::Y).expect("Y pulse");
         assert_eq!(pulse.delay_ticks, 3);
-        assert!(machine.scope.is_high(JoystickAxis::Y, pulse.trigger_tick));
-        assert!(
-            machine
-                .scope
-                .is_high(JoystickAxis::Y, pulse.trigger_tick + 3)
-        );
-        assert!(
-            !machine
-                .scope
-                .is_high(JoystickAxis::Y, pulse.trigger_tick + 4)
-        );
+        assert!(machine.scope.is_high_at_offset(JoystickAxis::Y, 0));
+        assert!(machine.scope.is_high_at_offset(JoystickAxis::Y, 3));
+        assert!(!machine.scope.is_high_at_offset(JoystickAxis::Y, 4));
     }
 
     #[test]
@@ -618,8 +608,35 @@ mod tests {
         assert_eq!(x.delay_ticks, 0);
         assert_eq!(y.delay_ticks, 3);
         assert!(x.trigger_tick > y.trigger_tick);
-        assert!(machine.scope.is_high(JoystickAxis::X, x.trigger_tick));
-        assert!(!machine.scope.is_high(JoystickAxis::X, x.trigger_tick + 1));
+        assert!(machine.scope.is_high_at_offset(JoystickAxis::X, 0));
+        assert!(!machine.scope.is_high_at_offset(JoystickAxis::X, 1));
+    }
+
+    #[test]
+    fn rc_scope_samples_are_triggered_sweeps_not_sliding_time_windows() {
+        let mut machine = DemoMachine::default();
+        machine.start_frame(0, 255);
+
+        for _ in 0..MAX_STEPS_PER_FRAME {
+            if machine.scope.pulse(JoystickAxis::X).is_some() {
+                break;
+            }
+            assert!(machine.step_frame());
+        }
+
+        let at_trigger = machine.scope_samples(JoystickAxis::Y);
+        let trigger_tick = machine.last_state.instr_count;
+        for _ in 0..8 {
+            assert!(machine.step_frame());
+        }
+        let later = machine.scope_samples(JoystickAxis::Y);
+
+        assert!(machine.last_state.instr_count > trigger_tick);
+        assert_eq!(at_trigger, later);
+        assert_eq!(later[0].tick, 0);
+        assert!(later[0].high);
+        assert!(later[3].high);
+        assert!(!later[4].high);
     }
 
     #[test]
