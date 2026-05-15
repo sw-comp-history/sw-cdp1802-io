@@ -15,6 +15,7 @@ const RC_SCOPE_DISPLAY_SCALE: u64 = 2;
 const CASSETTE_SAMPLES_PER_BIT: usize = 8;
 const CASSETTE_ZERO_PERIOD: usize = 8;
 const CASSETTE_ONE_PERIOD: usize = 4;
+const CASSETTE_SCOPE_QUIET_MARGIN: usize = 8;
 pub const ADD_SOURCE: &str = include_str!("asm/add.s");
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
@@ -671,10 +672,29 @@ fn cassette_waveform_samples(bytes: &[u8]) -> Vec<CassetteScopeSample> {
         .len()
         .saturating_mul(8)
         .saturating_mul(CASSETTE_SAMPLES_PER_BIT);
-    let start_sample = total_audio_samples.saturating_sub(CASSETTE_SCOPE_SAMPLES);
+    let signal_width = CASSETTE_SCOPE_SAMPLES.saturating_sub(CASSETTE_SCOPE_QUIET_MARGIN * 2);
+    let start_sample = total_audio_samples.saturating_sub(signal_width);
 
     for sample in 0..CASSETTE_SCOPE_SAMPLES {
-        let audio_sample = start_sample + sample;
+        if !(CASSETTE_SCOPE_QUIET_MARGIN..CASSETTE_SCOPE_SAMPLES - CASSETTE_SCOPE_QUIET_MARGIN)
+            .contains(&sample)
+        {
+            samples.push(CassetteScopeSample {
+                sample,
+                high: false,
+            });
+            continue;
+        }
+
+        let audio_sample = start_sample + sample - CASSETTE_SCOPE_QUIET_MARGIN;
+        if audio_sample >= total_audio_samples {
+            samples.push(CassetteScopeSample {
+                sample,
+                high: false,
+            });
+            continue;
+        }
+
         let bit_index = audio_sample / CASSETTE_SAMPLES_PER_BIT;
         let byte = bytes.get(bit_index / 8).copied().unwrap_or(0);
         let bit = (byte & (0x80 >> (bit_index % 8))) != 0;
@@ -992,10 +1012,12 @@ mod tests {
     fn cassette_scope_uses_distinct_square_wave_tones_for_bits() {
         let zeros = cassette_waveform_samples(&[0x00]);
         let ones = cassette_waveform_samples(&[0xff]);
+        let signal_start = CASSETTE_SCOPE_QUIET_MARGIN;
 
         assert_eq!(
             zeros
                 .iter()
+                .skip(signal_start)
                 .take(CASSETTE_ZERO_PERIOD)
                 .map(|sample| sample.high)
                 .collect::<Vec<_>>(),
@@ -1003,10 +1025,37 @@ mod tests {
         );
         assert_eq!(
             ones.iter()
+                .skip(signal_start)
                 .take(CASSETTE_ONE_PERIOD)
                 .map(|sample| sample.high)
                 .collect::<Vec<_>>(),
             vec![true, true, false, false]
+        );
+    }
+
+    #[test]
+    fn cassette_scope_has_quiet_start_and_end_margins() {
+        let samples = cassette_waveform_samples(&[0xff, 0x00, 0xa5]);
+
+        assert!(
+            samples
+                .iter()
+                .take(CASSETTE_SCOPE_QUIET_MARGIN)
+                .all(|sample| !sample.high)
+        );
+        assert!(
+            samples
+                .iter()
+                .rev()
+                .take(CASSETTE_SCOPE_QUIET_MARGIN)
+                .all(|sample| !sample.high)
+        );
+        assert!(
+            samples
+                .iter()
+                .skip(CASSETTE_SCOPE_QUIET_MARGIN)
+                .take(CASSETTE_SCOPE_SAMPLES - CASSETTE_SCOPE_QUIET_MARGIN * 2)
+                .any(|sample| sample.high)
         );
     }
 
