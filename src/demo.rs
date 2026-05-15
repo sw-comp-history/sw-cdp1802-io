@@ -83,7 +83,7 @@ impl DemoKind {
                 "Joystick demo: each axis is a potentiometer feeding an RC network connected to output strobe and EF4 input pins. The 1802 program strobes an axis, then counts in a polling loop until the capacitor echo reaches EF4; those counts position the ball in the shared 0x0000..0x00ff memory/video page. WARNING: if you move the joystick up you will crash the ball into the running program corrupting it."
             }
             Self::Logo => {
-                "Logo demo: the assembled program clears the shared 256-byte memory/video page, draws a simple rocket logo from static data, and halts while the TV monitor keeps scanning the bytes as pixels."
+                "Logo demo: the rocket image is manually entered static video data in the shared 256-byte memory/video page. There is no drawing code; after reset the CPU executes a single IDL while the TV monitor scans the bytes as pixels."
             }
             Self::Pattern => {
                 "Pattern demo: edit a small 1802 assembly program, assemble it in the browser, and run it to write a visible byte pattern into the lower half of the 256-byte memory/video page."

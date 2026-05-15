@@ -19,7 +19,7 @@ The **Joystick** demo recreates a 1970s COSMAC ELF-II style experiment:
 
 The black-and-white video behavior is intentionally historically rough. On the COSMAC ELF-II style setup, the video buffer could include ordinary memory, so the program bytes themselves appear as noise pixels. The joystick widget starts centered, and the initial ball lands near the center of the 256-byte memory display. If the ball moves into the part of the display backed by the running program, the program self-modifies and can crash on a later frame. That failure mode is part of the demo because it mirrors the behavior of the original hardware experiment.
 
-The **Logo** demo runs a separate CDP1802 assembly program that draws a blocky ELF-inspired mark into the same 256-byte video page. The demo selector switches the assembled source, listing, monitor, and CPU state view.
+The **Logo** demo is manually entered static video data in the same 256-byte video page. There is no drawing code; reset executes a single `IDL` instruction while the monitor scans the initialized bytes as pixels. The demo selector switches the assembled source, listing, monitor, and CPU state view.
 
 The **Pattern** demo is an editable CDP1802 assembly source panel. **Assemble** runs the Rust assembler on the current text and refreshes the listing and loaded memory image. **Run** assembles the current text, starts the emulator, and steps one 1802 instruction per browser timer callback so the page yields back to the browser thread between instructions. The default source writes a simple pattern into addresses `0x0080..0x0097`, which are the lower half of the 256-byte memory/video page.
 
@@ -28,7 +28,7 @@ The **Pattern** demo is an editable CDP1802 assembly source panel. **Assemble** 
 - `src/app.rs`: Yew UI with demo selector, conditional joystick controls, monitor, listing, and CPU telemetry.
 - `src/demo.rs`: CDP1802 machine wrapper that assembles the selected source, runs the I/O protocol, tracks CPU status, and updates the 256-byte video page.
 - `src/asm/joystick_lowmem.s`: joystick CDP1802 assembly source included with Rust `include_str!` and assembled at runtime.
-- `src/asm/logo.s`: logo CDP1802 assembly source included with Rust `include_str!` and assembled at runtime.
+- `src/asm/logo.s`: manually entered static logo video data included with Rust `include_str!` and assembled at runtime.
 - `src/asm/pattern.s`: editable starter CDP1802 assembly source included with Rust `include_str!` and loaded into the Pattern demo.
 - `styles/app.css`: application styling.
 - `pages/`: tracked GitHub Pages output.
