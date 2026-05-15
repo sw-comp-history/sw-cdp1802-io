@@ -280,6 +280,11 @@ p { line-height: 1.45; }
   filter: drop-shadow(0 0 3px rgba(184, 199, 255, 0.5));
 }
 
+.tape-trace {
+  stroke: #f1f1f1;
+  filter: drop-shadow(0 0 3px rgba(241, 241, 241, 0.55));
+}
+
 .monitor-panel { overflow-x: auto; }
 
 .monitor-bezel {

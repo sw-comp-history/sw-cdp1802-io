@@ -10,6 +10,7 @@ pub const MAX_STEPS_PER_FRAME: u64 = 80;
 pub const MAX_STEPS_PER_RUN: u64 = 400;
 pub const MAX_STEPS_PER_CASSETTE_LOAD: u64 = 4096;
 pub const SCOPE_SAMPLES: usize = 48;
+pub const CASSETTE_SCOPE_SAMPLES: usize = 96;
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
 pub const PATTERN_SOURCE: &str = include_str!("asm/pattern.s");
@@ -19,6 +20,8 @@ const PORT_CLEAR_VIDEO: u8 = 1;
 const PORT_X_PULSE: u8 = 2;
 const PORT_Y_PULSE: u8 = 3;
 const PORT_CASSETTE_IN: u8 = 4;
+const CASSETTE_LEADER_BYTES: usize = 16;
+const CASSETTE_SYNC_BYTE: u8 = 0xa5;
 const CHANGE_RECENT_STEPS: u64 = 1;
 const CHANGE_OLDER_STEPS: u64 = 10;
 
@@ -31,6 +34,10 @@ pub enum DemoKind {
 }
 
 impl DemoKind {
+    pub const fn all() -> [Self; 4] {
+        [Self::Cassette, Self::Joystick, Self::Logo, Self::Pattern]
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Joystick => "Joystick",
@@ -105,6 +112,12 @@ pub struct ScopeSample {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CassetteScopeSample {
+    pub sample: usize,
+    pub high: bool,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct ScopePulse {
     trigger_tick: u64,
     delay_ticks: u8,
@@ -170,6 +183,7 @@ pub struct DemoMachine {
     pub completed_frames: u64,
     pub last_ball_addr: Option<u16>,
     pub cassette_bytes_read: usize,
+    pub cassette_audio: Vec<u8>,
     pub kind: DemoKind,
     pub memory_map: MemoryMap,
     pub scope: ScopeState,
@@ -281,6 +295,7 @@ impl Default for DemoMachine {
             completed_frames: 0,
             last_ball_addr: None,
             cassette_bytes_read: 0,
+            cassette_audio: Vec::new(),
             kind: DemoKind::Joystick,
             memory_map: DemoKind::Joystick.memory_map(),
             scope: ScopeState::default(),
@@ -311,6 +326,7 @@ impl DemoMachine {
         self.completed_frames = 0;
         self.last_ball_addr = None;
         self.cassette_bytes_read = 0;
+        self.cassette_audio.clear();
         self.scope = ScopeState::default();
         self.reg_changed_at = [None; 16];
         self.control_changed_at = [None; 8];
@@ -475,7 +491,15 @@ impl DemoMachine {
                 BoardAction::ClearVideo => self.clear_non_code_video(),
             }
         }
+        let previous_cassette_pos = self.cassette_bytes_read;
         self.cassette_bytes_read = board.cassette_pos();
+        if self.kind == DemoKind::Cassette && self.cassette_bytes_read > previous_cassette_pos {
+            let stream = self.cassette_stream();
+            self.cassette_audio.extend(
+                (previous_cassette_pos..self.cassette_bytes_read)
+                    .filter_map(|idx| stream.get(idx).copied()),
+            );
+        }
         Ok(())
     }
 
@@ -494,9 +518,10 @@ impl DemoMachine {
         let Ok(logo) = assemble(LOGO_SOURCE) else {
             return vec![0; SCREEN_BYTES];
         };
-        (0..SCREEN_BYTES)
-            .map(|offset| logo.bytes.get(offset).copied().unwrap_or(0))
-            .collect()
+        let mut stream = vec![0; CASSETTE_LEADER_BYTES];
+        stream.push(CASSETTE_SYNC_BYTE);
+        stream.extend((0..SCREEN_BYTES).map(|offset| logo.bytes.get(offset).copied().unwrap_or(0)));
+        stream
     }
 
     pub fn active_addr(&self) -> u16 {
@@ -573,6 +598,30 @@ impl DemoMachine {
     pub fn scope_samples(&self, axis: JoystickAxis) -> Vec<ScopeSample> {
         self.scope.samples(axis, self.last_state.instr_count)
     }
+
+    pub fn cassette_scope_samples(&self) -> Vec<CassetteScopeSample> {
+        cassette_waveform_samples(&self.cassette_audio)
+    }
+}
+
+fn cassette_waveform_samples(bytes: &[u8]) -> Vec<CassetteScopeSample> {
+    let mut samples = Vec::with_capacity(CASSETTE_SCOPE_SAMPLES);
+    let start_bit = bytes
+        .len()
+        .saturating_mul(8)
+        .saturating_sub(CASSETTE_SCOPE_SAMPLES);
+
+    for sample in 0..CASSETTE_SCOPE_SAMPLES {
+        let bit_index = start_bit + sample;
+        let byte = bytes.get(bit_index / 8).copied().unwrap_or(0);
+        let bit = (byte & (0x80 >> (bit_index % 8))) != 0;
+        let clock = sample % 2 == 0;
+        samples.push(CassetteScopeSample {
+            sample,
+            high: clock ^ bit,
+        });
+    }
+    samples
 }
 
 pub fn listing_for(kind: DemoKind) -> String {
@@ -596,6 +645,13 @@ mod tests {
             "program length was {}",
             machine.program_len
         );
+    }
+
+    #[test]
+    fn demo_kinds_are_listed_alphabetically() {
+        let labels: Vec<_> = DemoKind::all().iter().map(|kind| kind.label()).collect();
+
+        assert_eq!(labels, vec!["Cassette", "Joystick", "Logo", "Pattern"]);
     }
 
     #[test]
@@ -775,7 +831,13 @@ mod tests {
         let mut machine = DemoMachine::default();
         machine.switch_demo(DemoKind::Cassette);
 
-        while machine.cassette_bytes_read <= 0x5a && machine.running() {
+        while machine.cassette_bytes_read < CASSETTE_LEADER_BYTES && machine.running() {
+            machine.step_frame();
+        }
+        assert_eq!(machine.screen_bytes(), vec![0; SCREEN_BYTES]);
+
+        let target_read = CASSETTE_LEADER_BYTES + 1 + 0x5a;
+        while machine.cassette_bytes_read <= target_read && machine.running() {
             machine.step_frame();
         }
 
@@ -784,6 +846,24 @@ mod tests {
         assert!(machine.cassette_bytes_read > 0x5a);
         assert_eq!(machine.memory.read_byte(0x0100 + 0x5a), logo.bytes[0x5a]);
         assert_eq!(machine.screen_bytes()[0x5a], logo.bytes[0x5a]);
+    }
+
+    #[test]
+    fn cassette_audio_waveform_advances_with_consumed_bytes() {
+        let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Cassette);
+
+        let initial = machine.cassette_scope_samples();
+        while machine.cassette_bytes_read < CASSETTE_LEADER_BYTES + 4 && machine.running() {
+            machine.step_frame();
+        }
+        let after_reads = machine.cassette_scope_samples();
+
+        assert_eq!(machine.cassette_audio.len(), machine.cassette_bytes_read);
+        assert!(machine.cassette_bytes_read >= 4);
+        assert_ne!(initial, after_reads);
+        assert!(after_reads.iter().any(|sample| sample.high));
+        assert!(after_reads.iter().any(|sample| !sample.high));
     }
 
     #[test]
@@ -798,8 +878,14 @@ mod tests {
 
         assert!(!machine.crashed, "{:?}", machine.last_error);
         assert!(machine.last_state.halted);
-        assert_eq!(machine.cassette_bytes_read, SCREEN_BYTES);
-        assert_eq!(machine.screen_bytes(), cassette);
+        assert_eq!(
+            machine.cassette_bytes_read,
+            CASSETTE_LEADER_BYTES + 1 + SCREEN_BYTES
+        );
+        assert_eq!(
+            machine.screen_bytes(),
+            cassette[CASSETTE_LEADER_BYTES + 1..].to_vec()
+        );
         assert_ne!(machine.memory.read_range(0, machine.program_len), cassette);
     }
 }

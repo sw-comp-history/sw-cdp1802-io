@@ -70,10 +70,11 @@ impl Component for App {
             Msg::SelectDemo(event) => {
                 let select = event.target_unchecked_into::<HtmlSelectElement>();
                 let kind = match select.value().as_str() {
+                    "cassette" => DemoKind::Cassette,
+                    "joystick" => DemoKind::Joystick,
                     "logo" => DemoKind::Logo,
                     "pattern" => DemoKind::Pattern,
-                    "cassette" => DemoKind::Cassette,
-                    _ => DemoKind::Joystick,
+                    _ => DemoKind::Cassette,
                 };
                 self.target_x = 128;
                 self.target_y = 128;
@@ -235,12 +236,14 @@ impl App {
     }
 
     fn view_demo_picker(&self, link: &html::Scope<Self>) -> Html {
+        let options = DemoKind::all().into_iter().map(|kind| {
+            html! {
+                <option value={demo_value(kind)} selected={self.machine.kind == kind}>{ kind.label() }</option>
+            }
+        });
         html! {
             <select class="demo-select" onchange={link.callback(Msg::SelectDemo)}>
-                <option value="joystick" selected={self.machine.kind == DemoKind::Joystick}>{"Joystick"}</option>
-                <option value="logo" selected={self.machine.kind == DemoKind::Logo}>{"Logo"}</option>
-                <option value="pattern" selected={self.machine.kind == DemoKind::Pattern}>{"Pattern"}</option>
-                <option value="cassette" selected={self.machine.kind == DemoKind::Cassette}>{"Cassette"}</option>
+                { for options }
             </select>
         }
     }
@@ -266,11 +269,14 @@ impl App {
             },
             DemoKind::Pattern => self.view_source_editor(link),
             DemoKind::Cassette => html! {
-                <div class="logo-demo-note">
-                    <span>{"4K loader at 0x0000"}</span>
-                    <span>{"cassette stream fills video page 0x0100"}</span>
-                    <span>{ format!("{} cassette bytes read", self.machine.cassette_bytes_read) }</span>
-                </div>
+                <>
+                    <div class="logo-demo-note">
+                        <span>{"4K loader at 0x0000"}</span>
+                        <span>{"cassette stream fills video page 0x0100"}</span>
+                        <span>{ format!("{} cassette bytes read", self.machine.cassette_bytes_read) }</span>
+                    </div>
+                    { self.view_cassette_scope() }
+                </>
             },
         }
     }
@@ -389,6 +395,23 @@ impl App {
         }
     }
 
+    fn view_cassette_scope(&self) -> Html {
+        let samples = self.machine.cassette_scope_samples();
+        let points = cassette_scope_points(&samples, 18.0, 58.0, SCOPE_WIDTH);
+        html! {
+            <section class="scope-panel cassette-scope-panel" aria-label="Cassette audio waveform">
+                <div class="scope-head">
+                    <span>{"Tape audio"}</span>
+                    <span>{ format!("byte {}", self.machine.cassette_bytes_read) }</span>
+                </div>
+                <svg class="scope" viewBox={format!("0 0 {SCOPE_WIDTH} 72")}>
+                    <line class="scope-grid-line" x1="0" y1="58" x2={SCOPE_WIDTH.to_string()} y2="58" />
+                    <polyline class="scope-trace tape-trace" points={points} />
+                </svg>
+            </section>
+        }
+    }
+
     fn view_registers(&self) -> Html {
         let regs = (0..16).map(|idx| {
             html! {
@@ -483,8 +506,42 @@ fn axis_bucket(value: u8) -> u8 {
     ((value as u16 * 4) / 256) as u8
 }
 
+fn demo_value(kind: DemoKind) -> &'static str {
+    match kind {
+        DemoKind::Cassette => "cassette",
+        DemoKind::Joystick => "joystick",
+        DemoKind::Logo => "logo",
+        DemoKind::Pattern => "pattern",
+    }
+}
+
 fn scope_points(
     samples: &[crate::demo::ScopeSample],
+    y_high: f64,
+    y_low: f64,
+    width: f64,
+) -> String {
+    if samples.is_empty() {
+        return String::new();
+    }
+
+    let step = width / (samples.len().saturating_sub(1).max(1) as f64);
+    let mut points = String::new();
+    let mut previous_y = if samples[0].high { y_high } else { y_low };
+    points.push_str(&format!("0.0,{previous_y:.1}"));
+
+    for (idx, sample) in samples.iter().enumerate().skip(1) {
+        let x = idx as f64 * step;
+        let y = if sample.high { y_high } else { y_low };
+        points.push_str(&format!(" {x:.1},{previous_y:.1}"));
+        points.push_str(&format!(" {x:.1},{y:.1}"));
+        previous_y = y;
+    }
+    points
+}
+
+fn cassette_scope_points(
+    samples: &[crate::demo::CassetteScopeSample],
     y_high: f64,
     y_low: f64,
     width: f64,
