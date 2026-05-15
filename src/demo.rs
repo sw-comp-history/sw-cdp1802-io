@@ -11,6 +11,7 @@ pub const MAX_STEPS_PER_RUN: u64 = 400;
 pub const MAX_STEPS_PER_CASSETTE_LOAD: u64 = 4096;
 pub const SCOPE_SAMPLES: usize = 48;
 pub const CASSETTE_SCOPE_SAMPLES: usize = 96;
+pub const ADD_SOURCE: &str = include_str!("asm/add.s");
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
 pub const PATTERN_SOURCE: &str = include_str!("asm/pattern.s");
@@ -27,38 +28,67 @@ const CHANGE_OLDER_STEPS: u64 = 10;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DemoKind {
+    Add,
+    Cassette,
     Joystick,
     Logo,
     Pattern,
-    Cassette,
 }
 
 impl DemoKind {
-    pub const fn all() -> [Self; 4] {
-        [Self::Cassette, Self::Joystick, Self::Logo, Self::Pattern]
+    pub const fn all() -> [Self; 5] {
+        [
+            Self::Add,
+            Self::Cassette,
+            Self::Joystick,
+            Self::Logo,
+            Self::Pattern,
+        ]
     }
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Add => "Add",
+            Self::Cassette => "Cassette",
             Self::Joystick => "Joystick",
             Self::Logo => "Logo",
             Self::Pattern => "Pattern",
-            Self::Cassette => "Cassette",
         }
     }
 
     pub fn source(self) -> &'static str {
         match self {
+            Self::Add => ADD_SOURCE,
+            Self::Cassette => CASSETTE_SOURCE,
             Self::Joystick => JOYSTICK_SOURCE,
             Self::Logo => LOGO_SOURCE,
             Self::Pattern => PATTERN_SOURCE,
-            Self::Cassette => CASSETTE_SOURCE,
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Add => {
+                "Add demo: step through a tiny 1802 program that loads 0x07 into D, adds 0x05 with ADI, and halts so the D register and program counter changes are visible one instruction at a time."
+            }
+            Self::Cassette => {
+                "Cassette demo: in 4K mode, a toggled-in loader scans a simulated tape leader until it sees sync byte 0xA5, then INP 4 copies a 256-byte logo into video memory at 0x0100 while the tape waveform is shown on the scope."
+            }
+            Self::Joystick => {
+                "Joystick demo: each axis is a potentiometer feeding an RC network connected to output strobe and EF4 input pins. The 1802 program strobes an axis, then counts in a polling loop until the capacitor echo reaches EF4; those counts position the ball in the shared 0x0000..0x00ff memory/video page. WARNING: if you move the joystick up you will crash the ball into the running program corrupting it."
+            }
+            Self::Logo => {
+                "Logo demo: the assembled program clears the shared 256-byte memory/video page, draws a simple rocket logo from static data, and halts while the TV monitor keeps scanning the bytes as pixels."
+            }
+            Self::Pattern => {
+                "Pattern demo: edit a small 1802 assembly program, assemble it in the browser, and run it to write a visible byte pattern into the lower half of the 256-byte memory/video page."
+            }
         }
     }
 
     pub fn memory_map(self) -> MemoryMap {
         match self {
-            Self::Joystick | Self::Logo | Self::Pattern => MemoryMap::elf_256(),
+            Self::Add | Self::Joystick | Self::Logo | Self::Pattern => MemoryMap::elf_256(),
             Self::Cassette => MemoryMap::expanded_4k(),
         }
     }
@@ -296,8 +326,8 @@ impl Default for DemoMachine {
             last_ball_addr: None,
             cassette_bytes_read: 0,
             cassette_audio: Vec::new(),
-            kind: DemoKind::Joystick,
-            memory_map: DemoKind::Joystick.memory_map(),
+            kind: DemoKind::Add,
+            memory_map: DemoKind::Add.memory_map(),
             scope: ScopeState::default(),
             reg_changed_at: [None; 16],
             control_changed_at: [None; 8],
@@ -372,6 +402,7 @@ impl DemoMachine {
         self.kind = kind;
         self.reset();
         match kind {
+            DemoKind::Add => {}
             DemoKind::Joystick => self.start_frame(self.x, self.y),
             DemoKind::Logo | DemoKind::Cassette => self.start_frame(128, 128),
             DemoKind::Pattern => {}
@@ -389,6 +420,21 @@ impl DemoMachine {
         if let Some(board) = self.board.as_mut() {
             board.set_position(x, y);
         }
+    }
+
+    pub fn step_once(&mut self) -> bool {
+        if self.crashed || self.last_state.halted {
+            return false;
+        }
+        if self.board.is_none() {
+            self.board = Some(WebIoBoard::new(128, 128, self.cassette_stream()));
+        }
+        self.running = true;
+        let stepped = self.step_frame();
+        if !self.last_state.halted && !self.crashed {
+            self.running = false;
+        }
+        stepped
     }
 
     pub fn step_frame(&mut self) -> bool {
@@ -429,6 +475,7 @@ impl DemoMachine {
             return false;
         }
         let max_steps = match self.kind {
+            DemoKind::Add => MAX_STEPS_PER_RUN,
             DemoKind::Joystick => MAX_STEPS_PER_FRAME,
             DemoKind::Logo | DemoKind::Pattern => MAX_STEPS_PER_RUN,
             DemoKind::Cassette => MAX_STEPS_PER_CASSETTE_LOAD,
@@ -481,7 +528,7 @@ impl DemoMachine {
             self.completed_frames += 1;
         } else if matches!(
             self.kind,
-            DemoKind::Logo | DemoKind::Pattern | DemoKind::Cassette
+            DemoKind::Add | DemoKind::Logo | DemoKind::Pattern | DemoKind::Cassette
         ) {
             self.visible_memory = self.memory.clone();
         }
@@ -651,12 +698,54 @@ mod tests {
     fn demo_kinds_are_listed_alphabetically() {
         let labels: Vec<_> = DemoKind::all().iter().map(|kind| kind.label()).collect();
 
-        assert_eq!(labels, vec!["Cassette", "Joystick", "Logo", "Pattern"]);
+        assert_eq!(
+            labels,
+            vec!["Add", "Cassette", "Joystick", "Logo", "Pattern"]
+        );
+    }
+
+    #[test]
+    fn default_demo_is_add() {
+        let machine = DemoMachine::default();
+
+        assert_eq!(machine.kind, DemoKind::Add);
+    }
+
+    #[test]
+    fn add_demo_steps_through_addition_and_halts() {
+        let mut machine = DemoMachine::default();
+
+        assert_eq!(machine.last_state.d, 0);
+        assert!(machine.step_once());
+        assert_eq!(machine.last_state.d, 0x07);
+        assert!(!machine.running());
+
+        assert!(machine.step_once());
+        assert_eq!(machine.last_state.d, 0x0c);
+        assert!(!machine.last_state.halted);
+
+        assert!(!machine.step_once());
+        assert!(machine.last_state.halted);
+    }
+
+    #[test]
+    fn every_demo_has_a_description() {
+        for kind in DemoKind::all() {
+            assert!(!kind.description().is_empty(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn joystick_description_ends_with_warning() {
+        assert!(DemoKind::Joystick.description().ends_with(
+            "WARNING: if you move the joystick up you will crash the ball into the running program corrupting it."
+        ));
     }
 
     #[test]
     fn centered_joystick_places_ball_near_center_memory() {
         let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
 
         machine.run_frame(128, 128);
 
@@ -667,6 +756,7 @@ mod tests {
     #[test]
     fn included_assembly_clears_non_code_video_before_sampling() {
         let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
 
         machine.run_frame(128, 255);
         assert_eq!(machine.memory.read_byte(0x00c4), 0x80);
@@ -679,6 +769,7 @@ mod tests {
     #[test]
     fn joystick_position_update_changes_rc_delays_without_cpu_restart() {
         let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
 
         machine.start_frame(128, 128);
         while machine.completed_frames < 1 && machine.step_frame() {}
@@ -697,6 +788,7 @@ mod tests {
     #[test]
     fn step_frame_executes_only_one_cpu_instruction() {
         let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
         machine.start_frame(128, 128);
 
         assert!(machine.step_frame());
@@ -707,6 +799,7 @@ mod tests {
     #[test]
     fn rc_scope_triggers_y_trace_from_output_pulse_and_drops_after_delay() {
         let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
         machine.start_frame(128, 255);
 
         for _ in 0..MAX_STEPS_PER_FRAME {
@@ -726,6 +819,7 @@ mod tests {
     #[test]
     fn rc_scope_records_x_and_y_independently() {
         let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
         machine.start_frame(0, 255);
 
         for _ in 0..MAX_STEPS_PER_FRAME {
@@ -747,6 +841,7 @@ mod tests {
     #[test]
     fn rc_scope_samples_are_triggered_sweeps_not_sliding_time_windows() {
         let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
         machine.start_frame(0, 255);
 
         for _ in 0..MAX_STEPS_PER_FRAME {

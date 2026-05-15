@@ -38,6 +38,7 @@ pub enum Msg {
     StopDrag,
     Reset,
     Tick,
+    StepAdd,
 }
 
 impl Component for App {
@@ -45,8 +46,7 @@ impl Component for App {
     type Properties = ();
 
     fn create(_ctx: &Context<Self>) -> Self {
-        let mut machine = DemoMachine::default();
-        machine.switch_demo(DemoKind::Logo);
+        let machine = DemoMachine::default();
         let listing = listing_for(machine.kind);
         Self {
             machine,
@@ -70,11 +70,12 @@ impl Component for App {
             Msg::SelectDemo(event) => {
                 let select = event.target_unchecked_into::<HtmlSelectElement>();
                 let kind = match select.value().as_str() {
+                    "add" => DemoKind::Add,
                     "cassette" => DemoKind::Cassette,
                     "joystick" => DemoKind::Joystick,
                     "logo" => DemoKind::Logo,
                     "pattern" => DemoKind::Pattern,
-                    _ => DemoKind::Cassette,
+                    _ => DemoKind::Add,
                 };
                 self.target_x = 128;
                 self.target_y = 128;
@@ -83,6 +84,9 @@ impl Component for App {
                     self.machine.kind = kind;
                     self.machine.reset_with_source(&self.source);
                     self.listing = listing_for_source(&self.source);
+                } else if kind == DemoKind::Add {
+                    self.machine.switch_demo(kind);
+                    self.listing = listing_for(kind);
                 } else {
                     self.machine.switch_demo(kind);
                     self.listing = listing_for(kind);
@@ -139,6 +143,9 @@ impl Component for App {
                     self.source = PATTERN_SOURCE.to_string();
                     self.machine.reset_with_source(&self.source);
                     self.listing = listing_for_source(&self.source);
+                } else if self.machine.kind == DemoKind::Add {
+                    self.machine.reset();
+                    self.listing = listing_for(DemoKind::Add);
                 } else {
                     self.machine.reset();
                     self.machine.start_frame(128, 128);
@@ -151,6 +158,15 @@ impl Component for App {
                 self.machine.step_frame();
                 self.schedule_tick(ctx);
                 true
+            }
+            Msg::StepAdd => {
+                if self.machine.kind == DemoKind::Add {
+                    self.machine.step_once();
+                    self.listing = listing_for(DemoKind::Add);
+                    true
+                } else {
+                    false
+                }
             }
         }
     }
@@ -250,6 +266,18 @@ impl App {
 
     fn view_demo_controls(&self, link: &html::Scope<Self>) -> Html {
         match self.machine.kind {
+            DemoKind::Add => html! {
+                <div class="logo-demo-note">
+                    <span>{"LDI 0x07; ADI 0x05; IDL"}</span>
+                    <button
+                        type="button"
+                        onclick={link.callback(|_| Msg::StepAdd)}
+                        disabled={self.machine.last_state.halted || self.machine.crashed}
+                    >
+                        {"Step"}
+                    </button>
+                </div>
+            },
             DemoKind::Joystick => html! {
                 <>
                     { self.view_joystick(link) }
@@ -351,25 +379,7 @@ impl App {
     }
 
     fn monitor_note(&self) -> String {
-        match self.machine.kind {
-            DemoKind::Joystick => concat!(
-                "Joystick demo: each axis is modeled as a potentiometer feeding an RC network. ",
-                "The 1802 program strobes the axis output pin, then polls EF4 in a counting loop ",
-                "until the capacitor echo arrives; that count positions the ball in the shared ",
-                "0x0000..0x00ff memory/video page."
-            )
-            .to_string(),
-            DemoKind::Cassette => format!(
-                "4K mode: loader code is at 0x0000..0x{:04x}; video scans 0x0100..0x01ff while INP 4 consumes cassette bytes.",
-                self.machine.program_len.saturating_sub(1)
-            ),
-            _ => format!(
-                "Program image: 0x0000..0x{:04x}; video scans 0x{:04x}..0x{:04x}.",
-                self.machine.program_len.saturating_sub(1),
-                self.machine.memory_map.video_base,
-                self.machine.memory_map.video_base + (crate::demo::SCREEN_BYTES as u16) - 1
-            ),
-        }
+        self.machine.kind.description().to_string()
     }
 
     fn view_scope(&self) -> Html {
@@ -508,6 +518,7 @@ fn axis_bucket(value: u8) -> u8 {
 
 fn demo_value(kind: DemoKind) -> &'static str {
     match kind {
+        DemoKind::Add => "add",
         DemoKind::Cassette => "cassette",
         DemoKind::Joystick => "joystick",
         DemoKind::Logo => "logo",
