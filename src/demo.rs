@@ -1,5 +1,5 @@
 use sw_cdp1802_asm::{assemble, assemble_listing};
-use sw_cdp1802_emulator::{BoardIo, CpuState, JoystickRcBoard, Memory, step_with_io};
+use sw_cdp1802_emulator::{BoardIo, CpuState, JoystickAxis, JoystickRcBoard, Memory, step_with_io};
 use sw_cdp1802_isa::ExternalFlag;
 use sw_cdp1802_isa::Instruction;
 
@@ -9,6 +9,7 @@ pub const SCREEN_HEIGHT: usize = 32;
 pub const SCREEN_BYTES: usize = SCREEN_WIDTH * SCREEN_HEIGHT / 8;
 pub const MAX_STEPS_PER_FRAME: u64 = 80;
 pub const MAX_STEPS_PER_RUN: u64 = 400;
+pub const SCOPE_SAMPLES: usize = 48;
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
 pub const PATTERN_SOURCE: &str = include_str!("asm/pattern.s");
@@ -63,6 +64,65 @@ pub enum ControlField {
     Q,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ScopeSample {
+    pub tick: u64,
+    pub high: bool,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct ScopePulse {
+    trigger_tick: u64,
+    delay_ticks: u8,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+pub struct ScopeState {
+    x: Option<ScopePulse>,
+    y: Option<ScopePulse>,
+}
+
+impl ScopeState {
+    fn record(&mut self, axis: JoystickAxis, trigger_tick: u64, delay_ticks: u8) {
+        let pulse = Some(ScopePulse {
+            trigger_tick,
+            delay_ticks,
+        });
+        match axis {
+            JoystickAxis::X => self.x = pulse,
+            JoystickAxis::Y => self.y = pulse,
+        }
+    }
+
+    fn pulse(&self, axis: JoystickAxis) -> Option<ScopePulse> {
+        match axis {
+            JoystickAxis::X => self.x,
+            JoystickAxis::Y => self.y,
+        }
+    }
+
+    fn samples(&self, axis: JoystickAxis, current_tick: u64) -> Vec<ScopeSample> {
+        let first_tick = current_tick.saturating_sub((SCOPE_SAMPLES - 1) as u64);
+        (0..SCOPE_SAMPLES)
+            .map(|offset| {
+                let tick = first_tick + offset as u64;
+                ScopeSample {
+                    tick,
+                    high: self.is_high(axis, tick),
+                }
+            })
+            .collect()
+    }
+
+    fn is_high(&self, axis: JoystickAxis, tick: u64) -> bool {
+        let Some(pulse) = self.pulse(axis) else {
+            return false;
+        };
+        let age = tick.saturating_sub(pulse.trigger_tick);
+        tick >= pulse.trigger_tick && age <= u64::from(pulse.delay_ticks)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DemoMachine {
     pub memory: Memory,
@@ -78,6 +138,7 @@ pub struct DemoMachine {
     pub completed_frames: u64,
     pub last_ball_addr: Option<u16>,
     pub kind: DemoKind,
+    pub scope: ScopeState,
     reg_changed_at: [Option<u64>; 16],
     control_changed_at: [Option<u64>; 8],
     board: Option<WebIoBoard>,
@@ -93,6 +154,7 @@ enum BoardAction {
 struct WebIoBoard {
     rc: JoystickRcBoard,
     action: Option<BoardAction>,
+    pulses: Vec<(JoystickAxis, u8)>,
 }
 
 impl WebIoBoard {
@@ -100,6 +162,7 @@ impl WebIoBoard {
         Self {
             rc: JoystickRcBoard::new(x, y),
             action: None,
+            pulses: Vec::new(),
         }
     }
 
@@ -109,6 +172,10 @@ impl WebIoBoard {
 
     fn take_action(&mut self) -> Option<BoardAction> {
         self.action.take()
+    }
+
+    fn take_pulses(&mut self) -> Vec<(JoystickAxis, u8)> {
+        std::mem::take(&mut self.pulses)
     }
 }
 
@@ -124,8 +191,16 @@ impl BoardIo for WebIoBoard {
     fn output_port(&mut self, port: u8, _value: u8) {
         match port {
             PORT_CLEAR_VIDEO => self.action = Some(BoardAction::ClearVideo),
-            PORT_X_PULSE => self.rc.output_port(PORT_X_PULSE, 0),
-            PORT_Y_PULSE => self.rc.output_port(PORT_Y_PULSE, 0),
+            PORT_X_PULSE => {
+                self.pulses
+                    .push((JoystickAxis::X, self.rc.delay_for_axis(JoystickAxis::X)));
+                self.rc.output_port(PORT_X_PULSE, 0);
+            }
+            PORT_Y_PULSE => {
+                self.pulses
+                    .push((JoystickAxis::Y, self.rc.delay_for_axis(JoystickAxis::Y)));
+                self.rc.output_port(PORT_Y_PULSE, 0);
+            }
             _ => {}
         }
     }
@@ -155,6 +230,7 @@ impl Default for DemoMachine {
             completed_frames: 0,
             last_ball_addr: None,
             kind: DemoKind::Joystick,
+            scope: ScopeState::default(),
             reg_changed_at: [None; 16],
             control_changed_at: [None; 8],
             board: None,
@@ -180,6 +256,7 @@ impl DemoMachine {
         self.last_executed_addr = None;
         self.completed_frames = 0;
         self.last_ball_addr = None;
+        self.scope = ScopeState::default();
         self.reg_changed_at = [None; 16];
         self.control_changed_at = [None; 8];
         self.board = None;
@@ -269,6 +346,11 @@ impl DemoMachine {
         self.track_changes(&before, &state);
         self.last_state = state;
         self.board = Some(board);
+
+        for (axis, delay_ticks) in self.board.as_mut().expect("board restored").take_pulses() {
+            self.scope
+                .record(axis, self.last_state.instr_count, delay_ticks);
+        }
 
         if self.last_state.halted {
             self.visible_memory = self.memory.clone();
@@ -413,6 +495,10 @@ impl DemoMachine {
     pub fn screen_bytes(&self) -> Vec<u8> {
         self.visible_memory.read_range(SCREEN_BASE, SCREEN_BYTES)
     }
+
+    pub fn scope_samples(&self, axis: JoystickAxis) -> Vec<ScopeSample> {
+        self.scope.samples(axis, self.last_state.instr_count)
+    }
 }
 
 pub fn listing_for(kind: DemoKind) -> String {
@@ -486,6 +572,54 @@ mod tests {
         assert!(machine.step_frame());
 
         assert_eq!(machine.last_state.instr_count, 1);
+    }
+
+    #[test]
+    fn rc_scope_triggers_y_trace_from_output_pulse_and_drops_after_delay() {
+        let mut machine = DemoMachine::default();
+        machine.start_frame(128, 255);
+
+        for _ in 0..MAX_STEPS_PER_FRAME {
+            if machine.scope.pulse(JoystickAxis::Y).is_some() {
+                break;
+            }
+            assert!(machine.step_frame());
+        }
+
+        let pulse = machine.scope.pulse(JoystickAxis::Y).expect("Y pulse");
+        assert_eq!(pulse.delay_ticks, 3);
+        assert!(machine.scope.is_high(JoystickAxis::Y, pulse.trigger_tick));
+        assert!(
+            machine
+                .scope
+                .is_high(JoystickAxis::Y, pulse.trigger_tick + 3)
+        );
+        assert!(
+            !machine
+                .scope
+                .is_high(JoystickAxis::Y, pulse.trigger_tick + 4)
+        );
+    }
+
+    #[test]
+    fn rc_scope_records_x_and_y_independently() {
+        let mut machine = DemoMachine::default();
+        machine.start_frame(0, 255);
+
+        for _ in 0..MAX_STEPS_PER_FRAME {
+            if machine.scope.pulse(JoystickAxis::X).is_some() {
+                break;
+            }
+            assert!(machine.step_frame());
+        }
+
+        let x = machine.scope.pulse(JoystickAxis::X).expect("X pulse");
+        let y = machine.scope.pulse(JoystickAxis::Y).expect("Y pulse");
+        assert_eq!(x.delay_ticks, 0);
+        assert_eq!(y.delay_ticks, 3);
+        assert!(x.trigger_tick > y.trigger_tick);
+        assert!(machine.scope.is_high(JoystickAxis::X, x.trigger_tick));
+        assert!(!machine.scope.is_high(JoystickAxis::X, x.trigger_tick + 1));
     }
 
     #[test]

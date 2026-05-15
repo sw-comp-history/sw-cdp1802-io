@@ -226,6 +226,60 @@ p { line-height: 1.45; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.scope-panel {
+  margin-top: 0.55rem;
+  border: 1px solid #384638;
+  border-radius: 6px;
+  background: #090d09;
+  padding: 0.45rem;
+}
+
+.scope-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+  color: #afd39f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+.scope {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #020302;
+  border: 1px solid #172117;
+}
+
+.scope-grid-line {
+  stroke: #1d2b1d;
+  stroke-width: 1;
+}
+
+.scope text {
+  fill: #9fba97;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+}
+
+.scope-trace {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: miter;
+  stroke-linecap: square;
+}
+
+.x-trace {
+  stroke: #f1f1f1;
+  filter: drop-shadow(0 0 3px rgba(241, 241, 241, 0.55));
+}
+
+.y-trace {
+  stroke: #b8c7ff;
+  filter: drop-shadow(0 0 3px rgba(184, 199, 255, 0.5));
+}
+
 .monitor-panel { overflow-x: auto; }
 
 .monitor-bezel {

@@ -1,3 +1,4 @@
+use sw_cdp1802_emulator::JoystickAxis;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::{Event, HtmlSelectElement, HtmlTextAreaElement, InputEvent, MouseEvent};
@@ -14,6 +15,8 @@ const HANDLE_RADIUS: f64 = 9.0;
 const CELL_WIDTH: usize = 4;
 const CELL_HEIGHT: usize = 8;
 const STEP_DELAY_MS: i32 = 16;
+const SCOPE_WIDTH: f64 = 190.0;
+const SCOPE_HEIGHT: f64 = 92.0;
 
 pub struct App {
     machine: DemoMachine,
@@ -250,6 +253,7 @@ impl App {
                         <span>{ format!("Y {:03}", self.target_y) }</span>
                         <span>{ format!("bucket {},{}", axis_bucket(self.target_x), axis_bucket(self.target_y)) }</span>
                     </div>
+                    { self.view_scope() }
                 </>
             },
             DemoKind::Logo => html! {
@@ -328,6 +332,29 @@ impl App {
                 <line x1={PAD.to_string()} y1={(JOYSTICK_SIZE / 2.0).to_string()} x2={(JOYSTICK_SIZE - PAD).to_string()} y2={(JOYSTICK_SIZE / 2.0).to_string()} />
                 <circle class="handle" cx={cx.to_string()} cy={cy.to_string()} r={HANDLE_RADIUS.to_string()} />
             </svg>
+        }
+    }
+
+    fn view_scope(&self) -> Html {
+        let x_samples = self.machine.scope_samples(JoystickAxis::X);
+        let y_samples = self.machine.scope_samples(JoystickAxis::Y);
+        let x_points = scope_points(&x_samples, 16.0, 34.0, SCOPE_WIDTH);
+        let y_points = scope_points(&y_samples, 56.0, 74.0, SCOPE_WIDTH);
+        html! {
+            <section class="scope-panel" aria-label="RC oscilloscope">
+                <div class="scope-head">
+                    <span>{"RC scope"}</span>
+                    <span>{ format!("tick {}", self.machine.last_state.instr_count) }</span>
+                </div>
+                <svg class="scope" viewBox={format!("0 0 {SCOPE_WIDTH} {SCOPE_HEIGHT}")}>
+                    <line class="scope-grid-line" x1="0" y1="34" x2={SCOPE_WIDTH.to_string()} y2="34" />
+                    <line class="scope-grid-line" x1="0" y1="74" x2={SCOPE_WIDTH.to_string()} y2="74" />
+                    <text x="5" y="14">{"X"}</text>
+                    <text x="5" y="54">{"Y"}</text>
+                    <polyline class="scope-trace x-trace" points={x_points} />
+                    <polyline class="scope-trace y-trace" points={y_points} />
+                </svg>
+            </section>
         }
     }
 
@@ -421,6 +448,31 @@ fn listing_addr(line: &str) -> Option<u16> {
 
 fn axis_bucket(value: u8) -> u8 {
     ((value as u16 * 4) / 256) as u8
+}
+
+fn scope_points(
+    samples: &[crate::demo::ScopeSample],
+    y_high: f64,
+    y_low: f64,
+    width: f64,
+) -> String {
+    if samples.is_empty() {
+        return String::new();
+    }
+
+    let step = width / (samples.len().saturating_sub(1).max(1) as f64);
+    let mut points = String::new();
+    let mut previous_y = if samples[0].high { y_high } else { y_low };
+    points.push_str(&format!("0.0,{previous_y:.1}"));
+
+    for (idx, sample) in samples.iter().enumerate().skip(1) {
+        let x = idx as f64 * step;
+        let y = if sample.high { y_high } else { y_low };
+        points.push_str(&format!(" {x:.1},{previous_y:.1}"));
+        points.push_str(&format!(" {x:.1},{y:.1}"));
+        previous_y = y;
+    }
+    points
 }
 
 fn symbol_addr(line: &str) -> Option<u16> {
