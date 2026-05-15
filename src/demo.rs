@@ -11,7 +11,7 @@ pub const MAX_STEPS_PER_RUN: u64 = 400;
 pub const MAX_STEPS_PER_CASSETTE_LOAD: u64 = 4096;
 pub const SCOPE_SAMPLES: usize = 48;
 pub const CASSETTE_SCOPE_SAMPLES: usize = 96;
-const RC_SCOPE_DISPLAY_SCALE: u64 = 2;
+const RC_SCOPE_DISPLAY_SCALE: u64 = 6;
 const CASSETTE_SAMPLES_PER_BIT: usize = 8;
 const CASSETTE_ZERO_PERIOD: usize = 8;
 const CASSETTE_ONE_PERIOD: usize = 4;
@@ -915,8 +915,30 @@ mod tests {
         assert_eq!(at_trigger, later);
         assert_eq!(later[0].tick, 0);
         assert!(later[0].high);
-        assert!(later[6].high);
-        assert!(!later[8].high);
+        assert!(later[15].high);
+        assert!(!later[24].high);
+    }
+
+    #[test]
+    fn centered_rc_scope_pulse_is_about_one_third_of_view() {
+        let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
+        machine.start_frame(128, 128);
+
+        for _ in 0..MAX_STEPS_PER_FRAME {
+            if machine.scope.pulse(JoystickAxis::X).is_some() {
+                break;
+            }
+            assert!(machine.step_frame());
+        }
+
+        let samples = machine.scope_samples(JoystickAxis::X);
+        let high_samples = samples.iter().filter(|sample| sample.high).count();
+
+        assert!(
+            high_samples >= SCOPE_SAMPLES / 3,
+            "centered pulse occupied {high_samples}/{SCOPE_SAMPLES} samples"
+        );
     }
 
     #[test]
