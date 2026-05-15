@@ -45,9 +45,31 @@ select {
   align-items: end;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1rem clamp(0.75rem, 2vw, 1.5rem);
+  padding: 1rem 6.25rem 1rem clamp(0.75rem, 2vw, 1.5rem);
   background: #263226;
   border-bottom: 1px solid #3e4b3e;
+}
+
+.github-corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 100;
+}
+
+.github-corner svg {
+  fill: #7cff82;
+  color: #101411;
+}
+
+.github-corner:hover .octo-arm {
+  animation: octocat-wave 560ms ease-in-out;
+}
+
+@keyframes octocat-wave {
+  0%, 100% { transform: rotate(0); }
+  20%, 60% { transform: rotate(-25deg); }
+  40%, 80% { transform: rotate(10deg); }
 }
 
 .eyebrow {
@@ -468,6 +490,7 @@ p { line-height: 1.45; }
   .topbar {
     align-items: start;
     flex-direction: column;
+    padding-right: 5.5rem;
   }
 
   .demo-grid {
