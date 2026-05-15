@@ -11,6 +11,10 @@ pub const MAX_STEPS_PER_RUN: u64 = 400;
 pub const MAX_STEPS_PER_CASSETTE_LOAD: u64 = 4096;
 pub const SCOPE_SAMPLES: usize = 48;
 pub const CASSETTE_SCOPE_SAMPLES: usize = 96;
+const RC_SCOPE_DISPLAY_SCALE: u64 = 2;
+const CASSETTE_SAMPLES_PER_BIT: usize = 8;
+const CASSETTE_ZERO_PERIOD: usize = 8;
+const CASSETTE_ONE_PERIOD: usize = 4;
 pub const ADD_SOURCE: &str = include_str!("asm/add.s");
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
@@ -181,9 +185,9 @@ impl ScopeState {
     fn samples(&self, axis: JoystickAxis, _current_tick: u64) -> Vec<ScopeSample> {
         (0..SCOPE_SAMPLES)
             .map(|offset| {
-                let tick = offset as u64;
+                let tick = offset as u64 / RC_SCOPE_DISPLAY_SCALE;
                 ScopeSample {
-                    tick,
+                    tick: offset as u64,
                     high: self.is_high_at_offset(axis, tick),
                 }
             })
@@ -653,19 +657,41 @@ impl DemoMachine {
 
 fn cassette_waveform_samples(bytes: &[u8]) -> Vec<CassetteScopeSample> {
     let mut samples = Vec::with_capacity(CASSETTE_SCOPE_SAMPLES);
-    let start_bit = bytes
+
+    if bytes.is_empty() {
+        return (0..CASSETTE_SCOPE_SAMPLES)
+            .map(|sample| CassetteScopeSample {
+                sample,
+                high: false,
+            })
+            .collect();
+    }
+
+    let total_audio_samples = bytes
         .len()
         .saturating_mul(8)
-        .saturating_sub(CASSETTE_SCOPE_SAMPLES);
+        .saturating_mul(CASSETTE_SAMPLES_PER_BIT);
+    let start_sample = total_audio_samples.saturating_sub(CASSETTE_SCOPE_SAMPLES);
 
     for sample in 0..CASSETTE_SCOPE_SAMPLES {
-        let bit_index = start_bit + sample;
+        let audio_sample = start_sample + sample;
+        let bit_index = audio_sample / CASSETTE_SAMPLES_PER_BIT;
         let byte = bytes.get(bit_index / 8).copied().unwrap_or(0);
         let bit = (byte & (0x80 >> (bit_index % 8))) != 0;
-        let clock = sample % 2 == 0;
+        let phase = audio_sample
+            % if bit {
+                CASSETTE_ONE_PERIOD
+            } else {
+                CASSETTE_ZERO_PERIOD
+            };
         samples.push(CassetteScopeSample {
             sample,
-            high: clock ^ bit,
+            high: phase
+                < if bit {
+                    CASSETTE_ONE_PERIOD / 2
+                } else {
+                    CASSETTE_ZERO_PERIOD / 2
+                },
         });
     }
     samples
@@ -862,8 +888,8 @@ mod tests {
         assert_eq!(at_trigger, later);
         assert_eq!(later[0].tick, 0);
         assert!(later[0].high);
-        assert!(later[3].high);
-        assert!(!later[4].high);
+        assert!(later[6].high);
+        assert!(!later[8].high);
     }
 
     #[test]
@@ -949,6 +975,7 @@ mod tests {
         machine.switch_demo(DemoKind::Cassette);
 
         let initial = machine.cassette_scope_samples();
+        assert!(initial.iter().all(|sample| !sample.high));
         while machine.cassette_bytes_read < CASSETTE_LEADER_BYTES + 4 && machine.running() {
             machine.step_frame();
         }
@@ -959,6 +986,28 @@ mod tests {
         assert_ne!(initial, after_reads);
         assert!(after_reads.iter().any(|sample| sample.high));
         assert!(after_reads.iter().any(|sample| !sample.high));
+    }
+
+    #[test]
+    fn cassette_scope_uses_distinct_square_wave_tones_for_bits() {
+        let zeros = cassette_waveform_samples(&[0x00]);
+        let ones = cassette_waveform_samples(&[0xff]);
+
+        assert_eq!(
+            zeros
+                .iter()
+                .take(CASSETTE_ZERO_PERIOD)
+                .map(|sample| sample.high)
+                .collect::<Vec<_>>(),
+            vec![true, true, true, true, false, false, false, false]
+        );
+        assert_eq!(
+            ones.iter()
+                .take(CASSETTE_ONE_PERIOD)
+                .map(|sample| sample.high)
+                .collect::<Vec<_>>(),
+            vec![true, true, false, false]
+        );
     }
 
     #[test]
