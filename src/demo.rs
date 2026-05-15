@@ -474,6 +474,11 @@ impl DemoMachine {
                 .record(axis, self.last_state.instr_count, delay_ticks);
         }
 
+        if self.crashed {
+            self.running = false;
+            return false;
+        }
+
         if self.last_state.halted {
             self.visible_memory = self.memory.clone();
             self.running = false;
@@ -531,6 +536,13 @@ impl DemoMachine {
             self.last_ball_addr = Some(addr);
             self.visible_memory = self.memory.clone();
             self.completed_frames += 1;
+            if usize::from(addr) < self.program_len {
+                self.crashed = true;
+                self.running = false;
+                self.last_error = Some(format!(
+                    "joystick ball overwrote running program at 0x{addr:04x}"
+                ));
+            }
         } else if matches!(
             self.kind,
             DemoKind::Add | DemoKind::Logo | DemoKind::Pattern | DemoKind::Cassette
@@ -836,6 +848,28 @@ mod tests {
         assert_eq!(machine.memory.read_byte(0x0084), 0x00);
         assert_eq!(machine.memory.read_byte(0x00c0), 0x80);
         assert_eq!(machine.screen_bytes()[0x00c0], 0x80);
+    }
+
+    #[test]
+    fn upward_joystick_can_corrupt_running_program() {
+        let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Joystick);
+        machine.start_frame(128, 128);
+        while machine.completed_frames < 1 && machine.step_frame() {}
+
+        machine.set_position(128, 0);
+        while machine.completed_frames < 2 && machine.step_frame() {}
+
+        let addr = machine.last_ball_addr.expect("ball write");
+        assert!(
+            usize::from(addr) < machine.program_len,
+            "ball landed at 0x{addr:04x}, outside program length {}",
+            machine.program_len
+        );
+        assert_eq!(machine.memory.read_byte(addr), 0x80);
+        assert!(machine.crashed, "{:?}", machine.last_error);
+        let expected_error = format!("joystick ball overwrote running program at 0x{addr:04x}");
+        assert_eq!(machine.last_error.as_deref(), Some(expected_error.as_str()));
     }
 
     #[test]
