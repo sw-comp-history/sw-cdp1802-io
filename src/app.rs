@@ -356,6 +356,13 @@ impl App {
                 <a href="https://software-wrighter-lab.github.io/" target="_blank">{"Blog"}</a>
                 <span class="footer-sep">{"|"}</span>
                 <a href="https://www.youtube.com/@SoftwareWrighter" target="_blank">{"YouTube"}</a>
+                <span class="footer-sep">{"|"}</span>
+                <span>{ format!(
+                    "{} | {} | {}",
+                    env!("BUILD_HOST"),
+                    env!("BUILD_SHA"),
+                    env!("BUILD_TIMESTAMP"),
+                ) }</span>
             </footer>
         }
     }
