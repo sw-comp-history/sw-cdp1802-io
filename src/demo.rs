@@ -3,20 +3,22 @@ use sw_cdp1802_emulator::{BoardIo, CpuState, JoystickAxis, JoystickRcBoard, Memo
 use sw_cdp1802_isa::ExternalFlag;
 use sw_cdp1802_isa::Instruction;
 
-pub const SCREEN_BASE: u16 = 0x0000;
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 pub const SCREEN_BYTES: usize = SCREEN_WIDTH * SCREEN_HEIGHT / 8;
 pub const MAX_STEPS_PER_FRAME: u64 = 80;
 pub const MAX_STEPS_PER_RUN: u64 = 400;
+pub const MAX_STEPS_PER_CASSETTE_LOAD: u64 = 4096;
 pub const SCOPE_SAMPLES: usize = 48;
 pub const JOYSTICK_SOURCE: &str = include_str!("asm/joystick_lowmem.s");
 pub const LOGO_SOURCE: &str = include_str!("asm/logo.s");
 pub const PATTERN_SOURCE: &str = include_str!("asm/pattern.s");
+pub const CASSETTE_SOURCE: &str = include_str!("asm/cassette_loader.s");
 
 const PORT_CLEAR_VIDEO: u8 = 1;
 const PORT_X_PULSE: u8 = 2;
 const PORT_Y_PULSE: u8 = 3;
+const PORT_CASSETTE_IN: u8 = 4;
 const CHANGE_RECENT_STEPS: u64 = 1;
 const CHANGE_OLDER_STEPS: u64 = 10;
 
@@ -25,6 +27,7 @@ pub enum DemoKind {
     Joystick,
     Logo,
     Pattern,
+    Cassette,
 }
 
 impl DemoKind {
@@ -33,6 +36,7 @@ impl DemoKind {
             Self::Joystick => "Joystick",
             Self::Logo => "Logo",
             Self::Pattern => "Pattern",
+            Self::Cassette => "Cassette",
         }
     }
 
@@ -41,6 +45,36 @@ impl DemoKind {
             Self::Joystick => JOYSTICK_SOURCE,
             Self::Logo => LOGO_SOURCE,
             Self::Pattern => PATTERN_SOURCE,
+            Self::Cassette => CASSETTE_SOURCE,
+        }
+    }
+
+    pub fn memory_map(self) -> MemoryMap {
+        match self {
+            Self::Joystick | Self::Logo | Self::Pattern => MemoryMap::elf_256(),
+            Self::Cassette => MemoryMap::expanded_4k(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct MemoryMap {
+    pub ram_size: usize,
+    pub video_base: u16,
+}
+
+impl MemoryMap {
+    pub const fn elf_256() -> Self {
+        Self {
+            ram_size: 256,
+            video_base: 0x0000,
+        }
+    }
+
+    pub const fn expanded_4k() -> Self {
+        Self {
+            ram_size: 4096,
+            video_base: 0x0100,
         }
     }
 }
@@ -135,7 +169,9 @@ pub struct DemoMachine {
     pub last_executed_addr: Option<u16>,
     pub completed_frames: u64,
     pub last_ball_addr: Option<u16>,
+    pub cassette_bytes_read: usize,
     pub kind: DemoKind,
+    pub memory_map: MemoryMap,
     pub scope: ScopeState,
     reg_changed_at: [Option<u64>; 16],
     control_changed_at: [Option<u64>; 8],
@@ -153,14 +189,18 @@ struct WebIoBoard {
     rc: JoystickRcBoard,
     action: Option<BoardAction>,
     pulses: Vec<(JoystickAxis, u8)>,
+    cassette: Vec<u8>,
+    cassette_pos: usize,
 }
 
 impl WebIoBoard {
-    fn new(x: u8, y: u8) -> Self {
+    fn new(x: u8, y: u8, cassette: Vec<u8>) -> Self {
         Self {
             rc: JoystickRcBoard::new(x, y),
             action: None,
             pulses: Vec::new(),
+            cassette,
+            cassette_pos: 0,
         }
     }
 
@@ -175,6 +215,16 @@ impl WebIoBoard {
     fn take_pulses(&mut self) -> Vec<(JoystickAxis, u8)> {
         std::mem::take(&mut self.pulses)
     }
+
+    fn read_cassette_byte(&mut self) -> u8 {
+        let value = self.cassette.get(self.cassette_pos).copied().unwrap_or(0);
+        self.cassette_pos = self.cassette_pos.saturating_add(1);
+        value
+    }
+
+    fn cassette_pos(&self) -> usize {
+        self.cassette_pos
+    }
 }
 
 impl BoardIo for WebIoBoard {
@@ -182,8 +232,11 @@ impl BoardIo for WebIoBoard {
         state.set_external_flag(ExternalFlag::Ef4, self.rc.ready());
     }
 
-    fn input_port(&self, _port: u8) -> u8 {
-        0
+    fn input_port(&mut self, port: u8) -> u8 {
+        match port {
+            PORT_CASSETTE_IN => self.read_cassette_byte(),
+            _ => 0,
+        }
     }
 
     fn output_port(&mut self, port: u8, _value: u8) {
@@ -227,7 +280,9 @@ impl Default for DemoMachine {
             last_executed_addr: None,
             completed_frames: 0,
             last_ball_addr: None,
+            cassette_bytes_read: 0,
             kind: DemoKind::Joystick,
+            memory_map: DemoKind::Joystick.memory_map(),
             scope: ScopeState::default(),
             reg_changed_at: [None; 16],
             control_changed_at: [None; 8],
@@ -245,8 +300,9 @@ impl DemoMachine {
     }
 
     pub fn reset_with_source(&mut self, source: &str) {
-        self.memory = Memory::default();
-        self.visible_memory = Memory::default();
+        self.memory_map = self.kind.memory_map();
+        self.memory = Memory::new(self.memory_map.ram_size);
+        self.visible_memory = Memory::new(self.memory_map.ram_size);
         self.last_state = CpuState::new();
         self.last_steps = 0;
         self.crashed = false;
@@ -254,6 +310,7 @@ impl DemoMachine {
         self.last_executed_addr = None;
         self.completed_frames = 0;
         self.last_ball_addr = None;
+        self.cassette_bytes_read = 0;
         self.scope = ScopeState::default();
         self.reg_changed_at = [None; 16];
         self.control_changed_at = [None; 8];
@@ -291,7 +348,7 @@ impl DemoMachine {
         self.last_steps = 0;
         self.last_error = None;
         self.last_executed_addr = None;
-        self.board = Some(WebIoBoard::new(x, y));
+        self.board = Some(WebIoBoard::new(x, y, self.cassette_stream()));
         self.running = true;
     }
 
@@ -300,7 +357,7 @@ impl DemoMachine {
         self.reset();
         match kind {
             DemoKind::Joystick => self.start_frame(self.x, self.y),
-            DemoKind::Logo => self.start_frame(128, 128),
+            DemoKind::Logo | DemoKind::Cassette => self.start_frame(128, 128),
             DemoKind::Pattern => {}
         }
     }
@@ -358,6 +415,7 @@ impl DemoMachine {
         let max_steps = match self.kind {
             DemoKind::Joystick => MAX_STEPS_PER_FRAME,
             DemoKind::Logo | DemoKind::Pattern => MAX_STEPS_PER_RUN,
+            DemoKind::Cassette => MAX_STEPS_PER_CASSETTE_LOAD,
         };
         if self.last_state.instr_count >= max_steps && self.completed_frames == 0 {
             self.crashed = true;
@@ -405,7 +463,10 @@ impl DemoMachine {
             self.last_ball_addr = Some(addr);
             self.visible_memory = self.memory.clone();
             self.completed_frames += 1;
-        } else if matches!(self.kind, DemoKind::Logo | DemoKind::Pattern) {
+        } else if matches!(
+            self.kind,
+            DemoKind::Logo | DemoKind::Pattern | DemoKind::Cassette
+        ) {
             self.visible_memory = self.memory.clone();
         }
 
@@ -414,14 +475,28 @@ impl DemoMachine {
                 BoardAction::ClearVideo => self.clear_non_code_video(),
             }
         }
+        self.cassette_bytes_read = board.cassette_pos();
         Ok(())
     }
 
     fn clear_non_code_video(&mut self) {
         let start = self.program_len.min(SCREEN_BYTES);
         for offset in start..SCREEN_BYTES {
-            self.memory.write_byte(SCREEN_BASE + offset as u16, 0);
+            self.memory
+                .write_byte(self.memory_map.video_base + offset as u16, 0);
         }
+    }
+
+    fn cassette_stream(&self) -> Vec<u8> {
+        if self.kind != DemoKind::Cassette {
+            return Vec::new();
+        }
+        let Ok(logo) = assemble(LOGO_SOURCE) else {
+            return vec![0; SCREEN_BYTES];
+        };
+        (0..SCREEN_BYTES)
+            .map(|offset| logo.bytes.get(offset).copied().unwrap_or(0))
+            .collect()
     }
 
     pub fn active_addr(&self) -> u16 {
@@ -491,7 +566,8 @@ impl DemoMachine {
     }
 
     pub fn screen_bytes(&self) -> Vec<u8> {
-        self.visible_memory.read_range(SCREEN_BASE, SCREEN_BYTES)
+        self.visible_memory
+            .read_range(self.memory_map.video_base, SCREEN_BYTES)
     }
 
     pub fn scope_samples(&self, axis: JoystickAxis) -> Vec<ScopeSample> {
@@ -679,5 +755,51 @@ mod tests {
         assert_eq!(machine.memory.read_byte(0x0088), 0xf0);
         assert_eq!(machine.memory.read_byte(0x0090), 0xff);
         assert_eq!(machine.screen_bytes()[0x0080], 0xaa);
+    }
+
+    #[test]
+    fn cassette_demo_uses_4k_memory_and_video_page_at_0100() {
+        let mut machine = DemoMachine::default();
+
+        machine.switch_demo(DemoKind::Cassette);
+
+        assert_eq!(machine.memory.size_bytes(), 4096);
+        assert_eq!(machine.memory_map.video_base, 0x0100);
+        assert!(machine.program_len < 0x0100);
+        assert_eq!(machine.screen_bytes(), vec![0; SCREEN_BYTES]);
+    }
+
+    #[test]
+    fn cassette_loader_consumes_stream_and_writes_video_through_cpu() {
+        let logo = assemble(LOGO_SOURCE).unwrap();
+        let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Cassette);
+
+        while machine.cassette_bytes_read <= 0x5a && machine.running() {
+            machine.step_frame();
+        }
+
+        assert!(!machine.crashed, "{:?}", machine.last_error);
+        assert!(machine.running());
+        assert!(machine.cassette_bytes_read > 0x5a);
+        assert_eq!(machine.memory.read_byte(0x0100 + 0x5a), logo.bytes[0x5a]);
+        assert_eq!(machine.screen_bytes()[0x5a], logo.bytes[0x5a]);
+    }
+
+    #[test]
+    fn cassette_loader_loads_full_256_byte_logo_and_halts() {
+        let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Cassette);
+        let cassette = machine.cassette_stream();
+
+        while machine.running() {
+            machine.step_frame();
+        }
+
+        assert!(!machine.crashed, "{:?}", machine.last_error);
+        assert!(machine.last_state.halted);
+        assert_eq!(machine.cassette_bytes_read, SCREEN_BYTES);
+        assert_eq!(machine.screen_bytes(), cassette);
+        assert_ne!(machine.memory.read_range(0, machine.program_len), cassette);
     }
 }

@@ -72,6 +72,7 @@ impl Component for App {
                 let kind = match select.value().as_str() {
                     "logo" => DemoKind::Logo,
                     "pattern" => DemoKind::Pattern,
+                    "cassette" => DemoKind::Cassette,
                     _ => DemoKind::Joystick,
                 };
                 self.target_x = 128;
@@ -186,7 +187,7 @@ impl Component for App {
                             <span>{"64 x 32, 256-byte page"}</span>
                         </div>
                         { self.view_monitor() }
-                        <p class="note">{ format!("Program image: 0x0000..0x{:04x}; video scans 0x0000..0x00ff.", self.machine.program_len.saturating_sub(1)) }</p>
+                        <p class="note">{ self.monitor_note() }</p>
                     </div>
 
                     <div class="panel listing-panel">
@@ -239,6 +240,7 @@ impl App {
                 <option value="joystick" selected={self.machine.kind == DemoKind::Joystick}>{"Joystick"}</option>
                 <option value="logo" selected={self.machine.kind == DemoKind::Logo}>{"Logo"}</option>
                 <option value="pattern" selected={self.machine.kind == DemoKind::Pattern}>{"Pattern"}</option>
+                <option value="cassette" selected={self.machine.kind == DemoKind::Cassette}>{"Cassette"}</option>
             </select>
         }
     }
@@ -263,6 +265,13 @@ impl App {
                 </div>
             },
             DemoKind::Pattern => self.view_source_editor(link),
+            DemoKind::Cassette => html! {
+                <div class="logo-demo-note">
+                    <span>{"4K loader at 0x0000"}</span>
+                    <span>{"cassette stream fills video page 0x0100"}</span>
+                    <span>{ format!("{} cassette bytes read", self.machine.cassette_bytes_read) }</span>
+                </div>
+            },
         }
     }
 
@@ -335,6 +344,28 @@ impl App {
         }
     }
 
+    fn monitor_note(&self) -> String {
+        match self.machine.kind {
+            DemoKind::Joystick => concat!(
+                "Joystick demo: each axis is modeled as a potentiometer feeding an RC network. ",
+                "The 1802 program strobes the axis output pin, then polls EF4 in a counting loop ",
+                "until the capacitor echo arrives; that count positions the ball in the shared ",
+                "0x0000..0x00ff memory/video page."
+            )
+            .to_string(),
+            DemoKind::Cassette => format!(
+                "4K mode: loader code is at 0x0000..0x{:04x}; video scans 0x0100..0x01ff while INP 4 consumes cassette bytes.",
+                self.machine.program_len.saturating_sub(1)
+            ),
+            _ => format!(
+                "Program image: 0x0000..0x{:04x}; video scans 0x{:04x}..0x{:04x}.",
+                self.machine.program_len.saturating_sub(1),
+                self.machine.memory_map.video_base,
+                self.machine.memory_map.video_base + (crate::demo::SCREEN_BYTES as u16) - 1
+            ),
+        }
+    }
+
     fn view_scope(&self) -> Html {
         let x_samples = self.machine.scope_samples(JoystickAxis::X);
         let y_samples = self.machine.scope_samples(JoystickAxis::Y);
@@ -396,18 +427,20 @@ impl App {
         let bytes = self.machine.screen_bytes();
         let program_len = self.machine.program_len;
         let ball_addr = self.machine.last_ball_addr.map(usize::from);
+        let video_base = usize::from(self.machine.memory_map.video_base);
         let pixels = (0..SCREEN_HEIGHT).flat_map(|row| {
             let bytes = &bytes;
             (0..SCREEN_WIDTH).map(move |col| {
                 let byte_index = row * (SCREEN_WIDTH / 8) + col / 8;
+                let mem_addr = video_base + byte_index;
                 let byte = bytes[byte_index];
                 let set = (byte & (0x80 >> (col % 8))) != 0;
-                let ball = set && ball_addr == Some(byte_index);
+                let ball = set && ball_addr == Some(mem_addr);
                 let class = classes!(
                     "pixel",
                     set.then_some("on"),
                     ball.then_some("ball"),
-                    (byte_index < program_len).then_some("code")
+                    (mem_addr < program_len).then_some("code")
                 );
                 html! { <span class={class}></span> }
             })
