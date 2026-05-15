@@ -652,20 +652,27 @@ impl DemoMachine {
     }
 
     pub fn cassette_scope_samples(&self) -> Vec<CassetteScopeSample> {
+        if self.kind == DemoKind::Cassette && self.last_state.halted {
+            return quiet_cassette_scope_samples();
+        }
         cassette_waveform_samples(&self.cassette_audio)
     }
+}
+
+fn quiet_cassette_scope_samples() -> Vec<CassetteScopeSample> {
+    (0..CASSETTE_SCOPE_SAMPLES)
+        .map(|sample| CassetteScopeSample {
+            sample,
+            high: false,
+        })
+        .collect()
 }
 
 fn cassette_waveform_samples(bytes: &[u8]) -> Vec<CassetteScopeSample> {
     let mut samples = Vec::with_capacity(CASSETTE_SCOPE_SAMPLES);
 
     if bytes.is_empty() {
-        return (0..CASSETTE_SCOPE_SAMPLES)
-            .map(|sample| CassetteScopeSample {
-                sample,
-                high: false,
-            })
-            .collect();
+        return quiet_cassette_scope_samples();
     }
 
     let total_audio_samples = bytes
@@ -1056,6 +1063,25 @@ mod tests {
                 .skip(CASSETTE_SCOPE_QUIET_MARGIN)
                 .take(CASSETTE_SCOPE_SAMPLES - CASSETTE_SCOPE_QUIET_MARGIN * 2)
                 .any(|sample| sample.high)
+        );
+    }
+
+    #[test]
+    fn cassette_scope_is_flat_after_loader_halts() {
+        let mut machine = DemoMachine::default();
+        machine.switch_demo(DemoKind::Cassette);
+
+        while machine.running() {
+            machine.step_frame();
+        }
+
+        assert!(machine.last_state.halted);
+        assert!(machine.cassette_audio.iter().any(|byte| *byte != 0));
+        assert!(
+            machine
+                .cassette_scope_samples()
+                .iter()
+                .all(|sample| !sample.high)
         );
     }
 
