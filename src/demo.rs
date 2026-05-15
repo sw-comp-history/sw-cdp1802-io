@@ -407,9 +407,9 @@ impl DemoMachine {
         self.kind = kind;
         self.reset();
         match kind {
-            DemoKind::Add => {}
+            DemoKind::Add | DemoKind::Cassette => {}
             DemoKind::Joystick => self.start_frame(self.x, self.y),
-            DemoKind::Logo | DemoKind::Cassette => self.start_frame(128, 128),
+            DemoKind::Logo => self.start_frame(128, 128),
             DemoKind::Pattern => {}
         }
     }
@@ -1027,6 +1027,13 @@ mod tests {
         assert_eq!(machine.memory_map.video_base, 0x0100);
         assert!(machine.program_len < 0x0100);
         assert_eq!(machine.screen_bytes(), vec![0; SCREEN_BYTES]);
+        assert!(!machine.running());
+        assert!(
+            machine
+                .cassette_scope_samples()
+                .iter()
+                .all(|sample| !sample.high)
+        );
     }
 
     #[test]
@@ -1034,6 +1041,7 @@ mod tests {
         let logo = assemble(LOGO_SOURCE).unwrap();
         let mut machine = DemoMachine::default();
         machine.switch_demo(DemoKind::Cassette);
+        machine.start_frame(128, 128);
 
         while machine.cassette_bytes_read < CASSETTE_LEADER_BYTES && machine.running() {
             machine.step_frame();
@@ -1059,6 +1067,7 @@ mod tests {
 
         let initial = machine.cassette_scope_samples();
         assert!(initial.iter().all(|sample| !sample.high));
+        machine.start_frame(128, 128);
         while machine.cassette_bytes_read < CASSETTE_LEADER_BYTES + 4 && machine.running() {
             machine.step_frame();
         }
@@ -1126,6 +1135,7 @@ mod tests {
     fn cassette_scope_is_flat_after_loader_halts() {
         let mut machine = DemoMachine::default();
         machine.switch_demo(DemoKind::Cassette);
+        machine.start_frame(128, 128);
 
         while machine.running() {
             machine.step_frame();
@@ -1146,6 +1156,7 @@ mod tests {
         let mut machine = DemoMachine::default();
         machine.switch_demo(DemoKind::Cassette);
         let cassette = machine.cassette_stream();
+        machine.start_frame(128, 128);
 
         while machine.running() {
             machine.step_frame();

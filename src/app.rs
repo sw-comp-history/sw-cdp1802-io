@@ -39,6 +39,7 @@ pub enum Msg {
     Reset,
     Tick,
     StepAdd,
+    RunCassette,
 }
 
 impl Component for App {
@@ -48,7 +49,7 @@ impl Component for App {
     fn create(_ctx: &Context<Self>) -> Self {
         let machine = DemoMachine::default();
         let listing = listing_for(machine.kind);
-        Self {
+        let mut app = Self {
             machine,
             dragging: false,
             listing,
@@ -56,7 +57,12 @@ impl Component for App {
             tick_pending: false,
             target_x: 128,
             target_y: 128,
+        };
+        if let Some(kind) = initial_demo_from_query() {
+            app.machine.switch_demo(kind);
+            app.listing = listing_for(kind);
         }
+        app
     }
 
     fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
@@ -69,14 +75,7 @@ impl Component for App {
         match msg {
             Msg::SelectDemo(event) => {
                 let select = event.target_unchecked_into::<HtmlSelectElement>();
-                let kind = match select.value().as_str() {
-                    "add" => DemoKind::Add,
-                    "cassette" => DemoKind::Cassette,
-                    "joystick" => DemoKind::Joystick,
-                    "logo" => DemoKind::Logo,
-                    "pattern" => DemoKind::Pattern,
-                    _ => DemoKind::Add,
-                };
+                let kind = demo_from_value(&select.value()).unwrap_or(DemoKind::Add);
                 self.target_x = 128;
                 self.target_y = 128;
                 if kind == DemoKind::Pattern {
@@ -84,7 +83,7 @@ impl Component for App {
                     self.machine.kind = kind;
                     self.machine.reset_with_source(&self.source);
                     self.listing = listing_for_source(&self.source);
-                } else if kind == DemoKind::Add {
+                } else if matches!(kind, DemoKind::Add | DemoKind::Cassette) {
                     self.machine.switch_demo(kind);
                     self.listing = listing_for(kind);
                 } else {
@@ -143,9 +142,9 @@ impl Component for App {
                     self.source = PATTERN_SOURCE.to_string();
                     self.machine.reset_with_source(&self.source);
                     self.listing = listing_for_source(&self.source);
-                } else if self.machine.kind == DemoKind::Add {
+                } else if matches!(self.machine.kind, DemoKind::Add | DemoKind::Cassette) {
                     self.machine.reset();
-                    self.listing = listing_for(DemoKind::Add);
+                    self.listing = listing_for(self.machine.kind);
                 } else {
                     self.machine.reset();
                     self.machine.start_frame(128, 128);
@@ -163,6 +162,15 @@ impl Component for App {
                 if self.machine.kind == DemoKind::Add {
                     self.machine.step_once();
                     self.listing = listing_for(DemoKind::Add);
+                    true
+                } else {
+                    false
+                }
+            }
+            Msg::RunCassette => {
+                if self.machine.kind == DemoKind::Cassette {
+                    self.machine.start_frame(128, 128);
+                    self.schedule_tick(ctx);
                     true
                 } else {
                     false
@@ -291,7 +299,8 @@ impl App {
             },
             DemoKind::Logo => html! {
                 <div class="logo-demo-note">
-                    <span>{"one-shot 1802 draw"}</span>
+                    <span>{"static video data"}</span>
+                    <span>{"single IDL instruction"}</span>
                     <span>{"video page 0x0000..0x00ff"}</span>
                 </div>
             },
@@ -302,6 +311,13 @@ impl App {
                         <span>{"4K loader at 0x0000"}</span>
                         <span>{"cassette stream fills video page 0x0100"}</span>
                         <span>{ format!("{} cassette bytes read", self.machine.cassette_bytes_read) }</span>
+                        <button
+                            type="button"
+                            onclick={link.callback(|_| Msg::RunCassette)}
+                            disabled={self.machine.running() || self.machine.last_state.halted || self.machine.crashed}
+                        >
+                            {"Run"}
+                        </button>
                     </div>
                     { self.view_cassette_scope() }
                 </>
@@ -531,6 +547,26 @@ fn demo_value(kind: DemoKind) -> &'static str {
         DemoKind::Logo => "logo",
         DemoKind::Pattern => "pattern",
     }
+}
+
+fn demo_from_value(value: &str) -> Option<DemoKind> {
+    match value {
+        "add" => Some(DemoKind::Add),
+        "cassette" => Some(DemoKind::Cassette),
+        "joystick" => Some(DemoKind::Joystick),
+        "logo" => Some(DemoKind::Logo),
+        "pattern" => Some(DemoKind::Pattern),
+        _ => None,
+    }
+}
+
+fn initial_demo_from_query() -> Option<DemoKind> {
+    let search = web_sys::window()?.location().search().ok()?;
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find_map(|(key, value)| (key == "demo").then(|| demo_from_value(value)).flatten())
 }
 
 fn scope_points(
