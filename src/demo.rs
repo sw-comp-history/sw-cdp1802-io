@@ -1,5 +1,5 @@
 use sw_cdp1802_asm::{assemble, assemble_listing};
-use sw_cdp1802_emulator::{BoardIo, CpuState, JoystickRcBoard, Memory};
+use sw_cdp1802_emulator::{BoardIo, CpuState, JoystickRcBoard, Memory, step_with_io};
 use sw_cdp1802_isa::ExternalFlag;
 use sw_cdp1802_isa::Instruction;
 
@@ -103,11 +103,25 @@ impl WebIoBoard {
         }
     }
 
+    fn set_position(&mut self, x: u8, y: u8) {
+        self.rc.set_position(x, y);
+    }
+
+    fn take_action(&mut self) -> Option<BoardAction> {
+        self.action.take()
+    }
+}
+
+impl BoardIo for WebIoBoard {
     fn sync_inputs_to_cpu(&self, state: &mut CpuState) {
         state.set_external_flag(ExternalFlag::Ef4, self.rc.ready());
     }
 
-    fn output_port(&mut self, port: u8) {
+    fn input_port(&self, _port: u8) -> u8 {
+        0
+    }
+
+    fn output_port(&mut self, port: u8, _value: u8) {
         match port {
             PORT_CLEAR_VIDEO => self.action = Some(BoardAction::ClearVideo),
             PORT_X_PULSE => self.rc.output_port(PORT_X_PULSE, 0),
@@ -116,16 +130,12 @@ impl WebIoBoard {
         }
     }
 
+    fn sync_outputs_from_cpu(&mut self, state: &CpuState) {
+        self.rc.sync_outputs_from_cpu(state);
+    }
+
     fn after_instruction(&mut self) {
         self.rc.after_instruction();
-    }
-
-    fn set_position(&mut self, x: u8, y: u8) {
-        self.rc.set_position(x, y);
-    }
-
-    fn take_action(&mut self) -> Option<BoardAction> {
-        self.action.take()
     }
 }
 
@@ -246,7 +256,7 @@ impl DemoMachine {
         };
 
         let before = state.clone();
-        if let Err(err) = self.step_web_io(&mut state, &mut board) {
+        if let Err(err) = self.step_shared_io(&mut state, &mut board) {
             self.last_state = state;
             self.last_steps = self.last_state.instr_count;
             self.crashed = true;
@@ -283,96 +293,42 @@ impl DemoMachine {
         self.running && !self.crashed
     }
 
-    fn step_web_io(&mut self, state: &mut CpuState, board: &mut WebIoBoard) -> Result<(), String> {
+    fn step_shared_io(
+        &mut self,
+        state: &mut CpuState,
+        board: &mut WebIoBoard,
+    ) -> Result<(), String> {
         if state.halted {
             return Err("CPU was already halted".to_string());
         }
 
-        board.sync_inputs_to_cpu(state);
         let pc = state.pc();
         self.last_executed_addr = Some(pc);
-        let (insn, size) = self
+        let (insn, _) = self
             .memory
             .decode_at(pc)
             .map_err(|err| format!("decode error at 0x{pc:04x}: {err:?}"))?;
-        state.advance_pc(size);
-        state.instr_count += 1;
 
-        match insn {
-            Instruction::Idle => state.halted = true,
-            Instruction::ResetQ => state.q = false,
-            Instruction::SetQ => state.q = true,
-            Instruction::Increment { reg } => {
-                let idx = reg.index_u8();
-                state.write_reg(idx, state.read_reg(idx).wrapping_add(1));
+        let joystick_ball_store = match insn {
+            Instruction::Store { reg }
+                if self.kind == DemoKind::Joystick && reg.index_u8() == 1 =>
+            {
+                Some(state.read_reg(1))
             }
-            Instruction::Branch { target } => {
-                let high = state.pc() & 0xff00;
-                state.set_pc(high | target as u16);
-            }
-            Instruction::BranchExternalFlag {
-                flag,
-                expected,
-                target,
-            } => {
-                if state.external_flag(flag) == expected {
-                    let high = state.pc() & 0xff00;
-                    state.set_pc(high | target as u16);
-                }
-            }
-            Instruction::Output { port } => {
-                let idx = state.x & 0x0f;
-                let addr = state.read_reg(idx);
-                let _value = self.memory.read_byte(addr);
-                board.output_port(port);
-                state.write_reg(idx, addr.wrapping_add(1));
-            }
-            Instruction::Store { reg } => {
-                let addr = state.read_reg(reg.index_u8());
-                self.memory.write_byte(addr, state.d);
-                if self.kind == DemoKind::Joystick && reg.index_u8() == 1 {
-                    self.last_ball_addr = Some(addr);
-                    self.visible_memory = self.memory.clone();
-                    self.completed_frames += 1;
-                } else if matches!(self.kind, DemoKind::Logo | DemoKind::Pattern) {
-                    self.visible_memory = self.memory.clone();
-                }
-            }
-            Instruction::PutLow { reg } => {
-                let idx = reg.index_u8();
-                let value = (state.read_reg(idx) & 0xff00) | state.d as u16;
-                state.write_reg(idx, value);
-            }
-            Instruction::PutHigh { reg } => {
-                let idx = reg.index_u8();
-                let value = ((state.d as u16) << 8) | (state.read_reg(idx) & 0x00ff);
-                state.write_reg(idx, value);
-            }
-            Instruction::LoadImmediate { value } => state.d = value,
-            Instruction::SetX { reg } => state.x = reg.index_u8(),
-            Instruction::Add => {
-                let value = self.memory.read_byte(state.read_reg(state.x));
-                let sum = state.d as u16 + value as u16;
-                state.d = sum as u8;
-                state.df = sum > 0xff;
-            }
-            Instruction::AddImmediate { value } => {
-                let sum = state.d as u16 + value as u16;
-                state.d = sum as u8;
-                state.df = sum > 0xff;
-            }
-            Instruction::ShiftLeft => {
-                state.df = state.d & 0x80 != 0;
-                state.d = state.d.wrapping_shl(1);
-            }
-            other => {
-                return Err(format!(
-                    "unsupported web demo instruction at 0x{pc:04x}: {other:?}"
-                ));
-            }
+            _ => None,
+        };
+
+        step_with_io(state, &mut self.memory, Some(board))
+            .map_err(|err| format!("emulator error at 0x{pc:04x}: {err:?}"))?;
+
+        if let Some(addr) = joystick_ball_store {
+            self.last_ball_addr = Some(addr);
+            self.visible_memory = self.memory.clone();
+            self.completed_frames += 1;
+        } else if matches!(self.kind, DemoKind::Logo | DemoKind::Pattern) {
+            self.visible_memory = self.memory.clone();
         }
 
-        board.after_instruction();
         if let Some(action) = board.take_action() {
             match action {
                 BoardAction::ClearVideo => self.clear_non_code_video(),
@@ -520,6 +476,16 @@ mod tests {
         assert_eq!(machine.memory.read_byte(0x0084), 0x00);
         assert_eq!(machine.memory.read_byte(0x00c0), 0x80);
         assert_eq!(machine.screen_bytes()[0x00c0], 0x80);
+    }
+
+    #[test]
+    fn step_frame_executes_only_one_cpu_instruction() {
+        let mut machine = DemoMachine::default();
+        machine.start_frame(128, 128);
+
+        assert!(machine.step_frame());
+
+        assert_eq!(machine.last_state.instr_count, 1);
     }
 
     #[test]
